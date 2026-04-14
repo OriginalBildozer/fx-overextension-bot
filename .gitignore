@@ -1,0 +1,19 @@
+# Credentials — ne jamais commiter
+.env
+
+# État du bot (géré par le cache GitHub Actions)
+alert_state.json
+
+# Logs locaux
+*.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# macOS
+.DS_Store

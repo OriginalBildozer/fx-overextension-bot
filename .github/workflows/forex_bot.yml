@@ -1,0 +1,65 @@
+name: 📈 Forex Overextension Scanner
+
+# ─── Déclencheurs ─────────────────────────────────────────────────────────────
+on:
+  schedule:
+    - cron: "*/15 * * * *"   # Toutes les 15 minutes
+  workflow_dispatch:          # Déclenchement manuel depuis l'UI GitHub
+
+# ─── Permissions minimales ────────────────────────────────────────────────────
+permissions:
+  contents: read
+  actions: write              # Nécessaire pour écrire dans le cache Actions
+
+jobs:
+  scan:
+    name: Scan overextensions
+    runs-on: ubuntu-latest
+    timeout-minutes: 12       # Tue le job si bloqué (sécurité)
+
+    steps:
+
+      # 1 — Récupération du code ───────────────────────────────────────────────
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      # 2 — Python + cache pip ─────────────────────────────────────────────────
+      - name: 🐍 Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"                # Met en cache ~/.cache/pip
+
+      # 3 — Dépendances ────────────────────────────────────────────────────────
+      - name: 📦 Install dependencies
+        run: pip install -r requirements.txt
+
+      # 4 — Restauration de l'état anti-doublon ────────────────────────────────
+      # On utilise restore-keys pour récupérer le cache du run précédent,
+      # puis on sauvegarde avec la clé du run courant (toujours unique).
+      - name: ♻️  Restore alert state (anti-doublon)
+        id: restore-state
+        uses: actions/cache/restore@v4
+        with:
+          path: alert_state.json
+          key: forex-alert-state-${{ github.run_id }}
+          restore-keys: |
+            forex-alert-state-
+
+      # 5 — Exécution du scanner ───────────────────────────────────────────────
+      - name: 🔍 Run scanner
+        env:
+          TELEGRAM_BOT_TOKEN:  ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+          MPLBACKEND: Agg      # Backend matplotlib non-interactif (headless)
+        run: python forex_bot.py
+
+      # 6 — Sauvegarde de l'état anti-doublon ──────────────────────────────────
+      # always() garantit la sauvegarde même si le scan a levé une erreur,
+      # pour ne pas perdre les cooldowns déjà enregistrés.
+      - name: 💾 Save alert state (anti-doublon)
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: alert_state.json
+          key: forex-alert-state-${{ github.run_id }}
