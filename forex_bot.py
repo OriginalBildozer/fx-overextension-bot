@@ -90,15 +90,15 @@ ATR_PERIOD          = 14
 EMA_FAST            = 20
 EMA_SLOW            = 50
 
-RSI_OVERBOUGHT      = 72     # RSI > seuil → excès haussier
-RSI_OVERSOLD        = 28     # RSI < seuil → excès baissier
+RSI_OVERBOUGHT      = 67     # RSI > seuil → excès haussier
+RSI_OVERSOLD        = 33     # RSI < seuil → excès baissier
 
-ATR_MULT_IMPULSE    = 2.0    # Impulsion doit dépasser N × ATR
-ATR_MULT_EMA_DIST   = 1.5    # Distance EMA doit dépasser N × ATR
+ATR_MULT_IMPULSE    = 1.0    # Impulsion doit dépasser N × ATR
+ATR_MULT_EMA_DIST   = 1.0    # Distance EMA doit dépasser N × ATR
 
 IMPULSE_WINDOW      = 6      # Bougies sur lesquelles mesurer l'impulsion
-MIN_DIRECTIONAL     = 4      # Minimum de bougies dans la même direction
-MAX_RETRACE_RATIO   = 0.35   # Retracement max toléré (35 % du mouvement)
+MAX_RETRACE_RATIO   = 0.20   # Retracement max toléré — condition ET obligatoire
+# Logique : (RSI OU Impulsion OU EMA-dist)  ET  (retracement ≤ 20 %)
 
 COOLDOWN_HOURS      = 4      # Délai avant de re-alerter même paire/direction
 CHART_CANDLES       = 72     # Bougies H1 affichées sur le graphique (~3 jours)
@@ -160,16 +160,23 @@ def fetch_h1_data(yf_ticker: str) -> pd.DataFrame | None:
 
 # ─── Détection de l'overextension ────────────────────────────────────────────
 
+def _strength_bar(n: int, total: int = 3) -> str:
+    """Barre de progression unicode. Ex : 2/3  [██░]"""
+    return f"{n}/{total}  [{'█' * n}{'░' * (total - n)}]"
+
+
 def detect_overextension(df: pd.DataFrame) -> dict | None:
     """
     Retourne un dict si overextension détectée, sinon None.
 
-    5 critères cumulatifs :
-      1. RSI extrême         → RSI > RSI_OVERBOUGHT  ou  < RSI_OVERSOLD
-      2. Forte impulsion     → amplitude > ATR_MULT_IMPULSE × ATR
-      3. Éloigné de l'EMA   → |prix − EMA20| > ATR_MULT_EMA_DIST × ATR
-      4. Mouvement directionnel → ≥ MIN_DIRECTIONAL bougies dans le même sens
-      5. Retracement minimal → ratio pullback/impulse < MAX_RETRACE_RATIO
+    Logique : (RSI OU Impulsion OU EMA-dist)  ET  retracement ≤ 20 %
+      • RSI extrême    → RSI > 67  ou  < 33
+      • Impulsion      → move net des 6 dernières bougies > 1× ATR
+      • Distance EMA20 → |prix − EMA20| > 1× ATR
+      • [ET] Retracement depuis l'extrême ≤ 20 % de l'impulsion (filtre obligatoire)
+
+    Direction = côté ayant le plus de signaux OR ; égalité → priorité au RSI.
+    Force du signal = nombre de critères OR déclenchés (1, 2 ou 3).
     """
     df = df.copy()
     df["RSI"]      = compute_rsi(df["Close"], RSI_PERIOD)
@@ -178,7 +185,7 @@ def detect_overextension(df: pd.DataFrame) -> dict | None:
     df["EMA_slow"] = compute_ema(df["Close"], EMA_SLOW)
 
     last   = df.iloc[-1]
-    window = df.iloc[-(IMPULSE_WINDOW + 1):]   # +1 pour inclure la bougie de départ
+    window = df.iloc[-(IMPULSE_WINDOW + 1):]
 
     rsi      = last["RSI"]
     atr      = last["ATR"]
@@ -188,54 +195,67 @@ def detect_overextension(df: pd.DataFrame) -> dict | None:
     if pd.isna(rsi) or pd.isna(atr) or atr == 0:
         return None
 
-    # 1 — Direction via RSI
+    impulse_start   = window.iloc[0]["Close"]
+    signed_impulse  = float(price - impulse_start)   # + = haussier
+    ema_dist_signed = float(price - ema_fast)         # + = au-dessus EMA
+
+    # ── Critères OR ───────────────────────────────────────────────────────
+    bullish_signals, bearish_signals = [], []
+
     if rsi > RSI_OVERBOUGHT:
-        direction = "bullish"
+        bullish_signals.append(f"RSI {rsi:.1f} > {RSI_OVERBOUGHT}")
     elif rsi < RSI_OVERSOLD:
+        bearish_signals.append(f"RSI {rsi:.1f} < {RSI_OVERSOLD}")
+
+    if signed_impulse > ATR_MULT_IMPULSE * atr:
+        bullish_signals.append(f"Impulsion +{signed_impulse/atr:.1f}×ATR")
+    elif signed_impulse < -ATR_MULT_IMPULSE * atr:
+        bearish_signals.append(f"Impulsion {signed_impulse/atr:.1f}×ATR")
+
+    if ema_dist_signed > ATR_MULT_EMA_DIST * atr:
+        bullish_signals.append(f"EMA dist +{ema_dist_signed/atr:.1f}×ATR")
+    elif ema_dist_signed < -ATR_MULT_EMA_DIST * atr:
+        bearish_signals.append(f"EMA dist {ema_dist_signed/atr:.1f}×ATR")
+
+    if not bullish_signals and not bearish_signals:
+        return None
+
+    # Direction = côté le plus représenté ; égalité → RSI prioritaire
+    if len(bullish_signals) >= len(bearish_signals):
+        direction = "bullish"
+        signals   = bullish_signals
+    else:
         direction = "bearish"
+        signals   = bearish_signals
+
+    # ── Condition ET — retracement depuis l'extrême ≤ 20 % ───────────────
+    impulse_abs = abs(signed_impulse)
+    if impulse_abs > 0:
+        if direction == "bullish":
+            peak    = float(window["High"].max())
+            retrace = (peak - float(price)) / impulse_abs
+        else:
+            trough  = float(window["Low"].min())
+            retrace = (float(price) - trough) / impulse_abs
     else:
-        return None
+        retrace = 0.0   # pas d'impulsion mesurable → filtre inactif
 
-    # 2 — Amplitude de l'impulsion
-    impulse_start = window.iloc[0]["Close"]
-    impulse       = abs(price - impulse_start)
-    if impulse < ATR_MULT_IMPULSE * atr:
-        return None
+    if retrace > MAX_RETRACE_RATIO:
+        return None     # le mouvement a déjà trop corrigé
 
-    # 3 — Distance EMA rapide
-    ema_dist = abs(price - ema_fast)
-    if ema_dist < ATR_MULT_EMA_DIST * atr:
-        return None
-
-    # 4 — Bougies directionnelles
-    candles       = window.iloc[1:]
-    bullish_count = (candles["Close"] > candles["Open"]).sum()
-    bearish_count = (candles["Close"] < candles["Open"]).sum()
-
-    if direction == "bullish" and bullish_count < MIN_DIRECTIONAL:
-        return None
-    if direction == "bearish" and bearish_count < MIN_DIRECTIONAL:
-        return None
-
-    # 5 — Retracement minimal
-    if direction == "bullish":
-        pullback = candles["High"].max() - candles["Low"].min()
-    else:
-        pullback = candles["High"].max() - candles["Low"].min()
-
-    retrace_ratio = (pullback / impulse) if impulse > 0 else 1.0
-    if retrace_ratio > MAX_RETRACE_RATIO:
-        return None
+    strength = len(signals)   # 1, 2 ou 3
 
     return {
-        "direction":     direction,
-        "rsi":           round(float(rsi), 1),
-        "atr":           round(float(atr), 6),
-        "impulse":       round(float(impulse), 6),
-        "impulse_atr":   round(float(impulse / atr), 2),
-        "ema_dist_atr":  round(float(ema_dist / atr), 2),
-        "price":         round(float(price), 5),
-        "retrace_ratio": round(float(retrace_ratio), 2),
+        "direction":    direction,
+        "signals":      signals,
+        "strength":     strength,
+        "strength_bar": _strength_bar(strength),
+        "rsi":          round(float(rsi), 1),
+        "impulse_atr":  round(float(signed_impulse / atr), 2),
+        "ema_dist_atr": round(float(ema_dist_signed / atr), 2),
+        "retrace_pct":  round(retrace * 100, 1),
+        "price":        round(float(price), 5),
+        "atr":          round(float(atr), 6),
     }
 
 
@@ -322,16 +342,23 @@ def save_alert_state(state: dict) -> None:
     ALERT_STATE_FILE.write_text(json.dumps(state, indent=2))
 
 
-def is_on_cooldown(state: dict, pair: str, direction: str) -> bool:
-    key = f"{pair}_{direction}"
+def _alert_key(pair: str, direction: str, signals: list) -> str:
+    """Clé unique = paire + direction + ensemble exact des signaux.
+    Si les signaux changent (même paire, même direction), la clé change
+    → le cooldown ne s'applique pas → nouvelle alerte autorisée."""
+    return f"{pair}|{direction}|{','.join(sorted(signals))}"
+
+
+def is_on_cooldown(state: dict, pair: str, direction: str, signals: list) -> bool:
+    key = _alert_key(pair, direction, signals)
     if key not in state:
         return False
     last_alert = datetime.fromisoformat(state[key])
     return datetime.utcnow() - last_alert < timedelta(hours=COOLDOWN_HOURS)
 
 
-def mark_alerted(state: dict, pair: str, direction: str) -> None:
-    state[f"{pair}_{direction}"] = datetime.utcnow().isoformat()
+def mark_alerted(state: dict, pair: str, direction: str, signals: list) -> None:
+    state[_alert_key(pair, direction, signals)] = datetime.utcnow().isoformat()
 
 
 # ─── Envoi Telegram ───────────────────────────────────────────────────────────
@@ -348,13 +375,15 @@ async def send_alert(
     arrow      = "🔼" if direction == "bullish" else "🔽"
     tv_url     = f"https://fr.tradingview.com/chart/?symbol={tv_symbol}"
 
+    signals_text = "\n".join(f"  ✅ `{s}`" for s in result["signals"])
+
     caption = (
         f"*New overextension on {pair} {emoji_main}*\n\n"
         f"{arrow} *Direction :* {direction.capitalize()}\n"
-        f"📊 *RSI :* `{result['rsi']}`\n"
-        f"📏 *Impulsion :* `{result['impulse_atr']}× ATR`\n"
-        f"📐 *Distance EMA{EMA_FAST} :* `{result['ema_dist_atr']}× ATR`\n"
         f"💰 *Prix :* `{result['price']}`\n\n"
+        f"*Signaux déclenchés :*\n{signals_text}\n\n"
+        f"⚡ *Force du signal :* `{result['strength_bar']}`\n"
+        f"↩️ *Retracement :* `{result['retrace_pct']} %`\n\n"
         f"[📈 Voir sur TradingView]({tv_url})"
     )
 
@@ -399,13 +428,13 @@ async def scan_all(bot: Bot) -> None:
                 f"| EMA dist={result['ema_dist_atr']}×ATR"
             )
 
-            if is_on_cooldown(state, pair, direction):
-                log.info(f"  {pair:<12} → cooldown actif ({COOLDOWN_HOURS}h), pas d'alerte")
+            if is_on_cooldown(state, pair, direction, result["signals"]):
+                log.info(f"  {pair:<12} → cooldown actif (signaux identiques), pas d'alerte")
                 continue
 
             chart_bytes = generate_chart(df, pair, direction)
             await send_alert(bot, pair, result, info["tv"], chart_bytes)
-            mark_alerted(state, pair, direction)
+            mark_alerted(state, pair, direction, result["signals"])
             save_alert_state(state)
             alerts_sent += 1
 
