@@ -555,6 +555,13 @@ async def scan_all(bot: Bot) -> None:
         except Exception as exc:
             log.error(f"  {pair:<12} → erreur inattendue : {exc}", exc_info=True)
 
+    # Séparateur de fin de salve
+    if alerts_sent > 0:
+        await bot.send_message(
+            chat_id=TELEGRAM_CHANNEL_ID,
+            text="‼️" * 20,
+        )
+
     log.info("-" * 60)
     log.info(f"Scan terminé — {alerts_sent} alerte(s) envoyée(s)")
 
