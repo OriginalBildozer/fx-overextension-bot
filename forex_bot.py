@@ -101,7 +101,7 @@ MAX_RETRACE_RATIO   = 0.20   # Retracement max toléré — condition ET obligat
 # Logique : (RSI OU Impulsion OU EMA-dist)  ET  (retracement ≤ 20 %)
 
 COOLDOWN_HOURS      = 4      # Délai avant de re-alerter même paire/direction
-CHART_CANDLES       = 72     # Bougies H1 affichées sur le graphique (~3 jours)
+CHART_RIGHT_MARGIN  = 12     # Espace vide à droite (12h à venir)
 
 ALERT_STATE_FILE    = Path("alert_state.json")
 
@@ -262,21 +262,40 @@ def detect_overextension(df: pd.DataFrame) -> dict | None:
 # ─── Génération du graphique ──────────────────────────────────────────────────
 
 def generate_chart(df: pd.DataFrame, pair: str, direction: str) -> bytes:
-    """Chandelier japonais H1, style sombre TradingView, EMA20 + EMA50."""
-    chart_df = df.tail(CHART_CANDLES).copy()
-    ema20    = compute_ema(chart_df["Close"], EMA_FAST)
-    ema50    = compute_ema(chart_df["Close"], EMA_SLOW)
+    """
+    Chandelier japonais H1, style sombre TradingView.
+    - Fenêtre : minuit J-2 → maintenant + 12h vides à droite
+    - EMA 20 blanche
+    - Ligne pointillée à chaque minuit
+    - Ligne pointillée séparant passé / futur
+    """
+    from datetime import timezone
+
+    # ── Fenêtre : minuit d'il y a 2 jours ────────────────────────────────
+    now      = datetime.now(timezone.utc)
+    start_dt = now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=2)
+
+    # Harmoniser timezone avec l'index du DataFrame
+    if df.index.tzinfo is None:
+        start_dt = start_dt.replace(tzinfo=None)
+
+    # Calculer l'EMA sur tout le df (évite l'effet de chauffe en début de fenêtre)
+    ema20_full = compute_ema(df["Close"], EMA_FAST)
+
+    chart_df = df[df.index >= start_dt].copy()
+    ema20    = ema20_full[chart_df.index]
+
+    if chart_df.empty:
+        chart_df = df.tail(48).copy()
+        ema20    = ema20_full[chart_df.index]
 
     add_plots = [
-        mpf.make_addplot(ema20, color="#2196F3", width=1.4, label=f"EMA {EMA_FAST}"),
-        mpf.make_addplot(ema50, color="#FF9800", width=1.4, label=f"EMA {EMA_SLOW}"),
+        mpf.make_addplot(ema20, color="#FFFFFF", width=1.4, label=f"EMA {EMA_FAST}"),
     ]
-
     mc = mpf.make_marketcolors(
         up="#26a69a", down="#ef5350",
-        edge="inherit", wick="inherit", volume="inherit",
+        edge="inherit", wick="inherit",
     )
-
     try:
         mpf.make_mpf_style(base_mpf_style="nightclouds")
         base_style = "nightclouds"
@@ -299,27 +318,64 @@ def generate_chart(df: pd.DataFrame, pair: str, direction: str) -> bytes:
     )
 
     label_dir = "BULLISH 🔼" if direction == "bullish" else "BEARISH 🔽"
-    title     = f"\n{pair}  ·  H1  ·  Overextension {label_dir}"
-
     buf = io.BytesIO()
     fig, axes = mpf.plot(
         chart_df,
         type="candle",
         style=style,
         addplot=add_plots,
-        title=title,
+        title=f"\n{pair}  ·  H1  ·  Overextension {label_dir}",
         figsize=(14, 7),
         returnfig=True,
         tight_layout=True,
         warn_too_much_data=300,
-        volume=True,
-        volume_panel=1,
-        panel_ratios=(4, 1),
+        volume=False,
     )
+
+    ax = axes[0]
+    xmin, xmax = ax.get_xlim()
+    ymin, ymax = ax.get_ylim()
+
+    # ── Lignes verticales à chaque minuit ─────────────────────────────────
+    for i, ts in enumerate(chart_df.index):
+        if ts.hour == 0 and ts.minute == 0:
+            ax.axvline(
+                x=i,
+                color="#4A4E6A",
+                linewidth=0.9,
+                linestyle=":",
+                alpha=0.85,
+                zorder=1,
+            )
+            ax.text(
+                i + 0.3, ymax,
+                ts.strftime("%d %b"),
+                color="#6B7099",
+                fontsize=7.5,
+                va="top",
+            )
+
+    # ── Espace vide de 12h à droite + séparateur passé/futur ─────────────
+    ax.set_xlim(xmin, xmax + CHART_RIGHT_MARGIN)
+    ax.axvline(
+        x=xmax - 0.5,
+        color="#778899",
+        linewidth=1.1,
+        linestyle="--",
+        alpha=0.75,
+        zorder=2,
+    )
+    ax.text(
+        xmax + 0.4, ymax,
+        "  →  12h",
+        color="#778899",
+        fontsize=8,
+        va="top",
+    )
+
     axes[0].title.set_color("#FFFFFF")
     axes[0].title.set_fontsize(13)
     fig.patch.set_facecolor("#131722")
-
     fig.savefig(buf, format="png", bbox_inches="tight", dpi=130, facecolor="#131722")
     plt.close(fig)
     buf.seek(0)
