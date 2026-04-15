@@ -184,9 +184,13 @@ def _find_swing_lows(df: pd.DataFrame, n: int = SWING_LOOKBACK) -> list[tuple[in
 
 # ─── Détection de l'overextension ────────────────────────────────────────────
 
-def _strength_bar(n: int, total: int = 4) -> str:
-    """Barre de progression unicode. Ex : 2/4  [██░░]"""
-    return f"{n}/{total}  [{'█' * n}{'░' * (total - n)}]"
+def _strength_stars(n: int, total: int = 4) -> str:
+    """Étoiles colorées selon le nombre de conditions déclenchées.
+    1 → rouge  |  2-3 → orange  |  4 → vert
+    Ex : 🟠 ★★★☆  (3/4)
+    """
+    color = "🔴" if n == 1 else ("🟢" if n == total else "🟠")
+    return f"{color} {'★' * n}{'☆' * (total - n)}  ({n}/{total})"
 
 
 def detect_overextension(df: pd.DataFrame) -> dict | None:
@@ -292,7 +296,7 @@ def detect_overextension(df: pd.DataFrame) -> dict | None:
         "direction":    direction,
         "signals":      signals,
         "strength":     strength,
-        "strength_bar": _strength_bar(strength),
+        "strength_bar": _strength_stars(strength),
         "rsi":          round(float(rsi), 1),
         "impulse_atr":  round(float(signed_impulse / atr), 2),
         "ema_dist_atr": round(float(ema_dist_signed / atr), 2),
@@ -481,7 +485,7 @@ async def send_alert(
         f"{arrow} *Direction :* {direction.capitalize()}\n"
         f"💰 *Prix :* `{result['price']}`\n\n"
         f"*Signaux déclenchés :*\n{signals_text}\n\n"
-        f"⚡ *Force du signal :* `{result['strength_bar']}`\n"
+        f"⚡ *Force du signal :* {result['strength_bar']}\n"
         f"↩️ *Retracement :* `{result['retrace_pct']} %`\n\n"
         f"[📈 Voir sur TradingView]({tv_url})"
     )
