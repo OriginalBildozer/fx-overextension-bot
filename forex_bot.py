@@ -98,7 +98,9 @@ ATR_MULT_EMA_DIST   = 1.0    # Distance EMA doit dépasser N × ATR
 
 IMPULSE_WINDOW      = 6      # Bougies sur lesquelles mesurer l'impulsion
 MAX_RETRACE_RATIO   = 0.20   # Retracement max toléré — condition ET obligatoire
-# Logique : (RSI OU Impulsion OU EMA-dist)  ET  (retracement ≤ 20 %)
+SWING_LOOKBACK      = 3      # Bougies de chaque côté pour valider un swing point
+SWING_WINDOW        = 168    # Profondeur de recherche des swing points (7j × 24h)
+# Logique : (RSI OU Impulsion OU EMA-dist OU HH/LL)  ET  (retracement ≤ 20 %)
 
 COOLDOWN_HOURS      = 4      # Délai avant de re-alerter même paire/direction
 CHART_RIGHT_MARGIN  = 12     # Espace vide à droite (12h à venir)
@@ -158,10 +160,32 @@ def fetch_h1_data(yf_ticker: str) -> pd.DataFrame | None:
         return None
 
 
+# ─── Swing points (Higher High / Lower Low) ──────────────────────────────────
+
+def _find_swing_highs(df: pd.DataFrame, n: int = SWING_LOOKBACK) -> list[tuple[int, float]]:
+    """Swing high : bougie dont le High est le maximum sur N bougies de chaque côté."""
+    highs  = df["High"].values
+    swings = []
+    for i in range(n, len(highs) - n):
+        if highs[i] == max(highs[i - n: i + n + 1]):
+            swings.append((i, float(highs[i])))
+    return swings
+
+
+def _find_swing_lows(df: pd.DataFrame, n: int = SWING_LOOKBACK) -> list[tuple[int, float]]:
+    """Swing low : bougie dont le Low est le minimum sur N bougies de chaque côté."""
+    lows   = df["Low"].values
+    swings = []
+    for i in range(n, len(lows) - n):
+        if lows[i] == min(lows[i - n: i + n + 1]):
+            swings.append((i, float(lows[i])))
+    return swings
+
+
 # ─── Détection de l'overextension ────────────────────────────────────────────
 
-def _strength_bar(n: int, total: int = 3) -> str:
-    """Barre de progression unicode. Ex : 2/3  [██░]"""
+def _strength_bar(n: int, total: int = 4) -> str:
+    """Barre de progression unicode. Ex : 2/4  [██░░]"""
     return f"{n}/{total}  [{'█' * n}{'░' * (total - n)}]"
 
 
@@ -169,14 +193,16 @@ def detect_overextension(df: pd.DataFrame) -> dict | None:
     """
     Retourne un dict si overextension détectée, sinon None.
 
-    Logique : (RSI OU Impulsion OU EMA-dist)  ET  retracement ≤ 20 %
+    Logique : (RSI OU Impulsion OU EMA-dist OU HH/LL)  ET  retracement ≤ 20 %
       • RSI extrême    → RSI > 67  ou  < 33
       • Impulsion      → move net des 6 dernières bougies > 1× ATR
       • Distance EMA20 → |prix − EMA20| > 1× ATR
+      • Higher High    → dernier swing high > swing high précédent  (bullish)
+      • Lower Low      → dernier swing low  < swing low  précédent  (bearish)
       • [ET] Retracement depuis l'extrême ≤ 20 % de l'impulsion (filtre obligatoire)
 
     Direction = côté ayant le plus de signaux OR ; égalité → priorité au RSI.
-    Force du signal = nombre de critères OR déclenchés (1, 2 ou 3).
+    Force du signal = nombre de critères OR déclenchés (1 à 4).
     """
     df = df.copy()
     df["RSI"]      = compute_rsi(df["Close"], RSI_PERIOD)
@@ -202,20 +228,37 @@ def detect_overextension(df: pd.DataFrame) -> dict | None:
     # ── Critères OR ───────────────────────────────────────────────────────
     bullish_signals, bearish_signals = [], []
 
+    # 1 — RSI extrême
     if rsi > RSI_OVERBOUGHT:
         bullish_signals.append(f"RSI {rsi:.1f} > {RSI_OVERBOUGHT}")
     elif rsi < RSI_OVERSOLD:
         bearish_signals.append(f"RSI {rsi:.1f} < {RSI_OVERSOLD}")
 
+    # 2 — Impulsion > 1× ATR
     if signed_impulse > ATR_MULT_IMPULSE * atr:
         bullish_signals.append(f"Impulsion +{signed_impulse/atr:.1f}×ATR")
     elif signed_impulse < -ATR_MULT_IMPULSE * atr:
         bearish_signals.append(f"Impulsion {signed_impulse/atr:.1f}×ATR")
 
+    # 3 — Distance EMA20 > 1× ATR
     if ema_dist_signed > ATR_MULT_EMA_DIST * atr:
         bullish_signals.append(f"EMA dist +{ema_dist_signed/atr:.1f}×ATR")
     elif ema_dist_signed < -ATR_MULT_EMA_DIST * atr:
         bearish_signals.append(f"EMA dist {ema_dist_signed/atr:.1f}×ATR")
+
+    # 4 — Higher High / Lower Low
+    swing_df = df.iloc[-SWING_WINDOW:]
+    sh = _find_swing_highs(swing_df)
+    sl = _find_swing_lows(swing_df)
+
+    if len(sh) >= 2 and sh[-1][1] > sh[-2][1]:
+        bullish_signals.append(
+            f"Higher High {sh[-2][1]:.5f} → {sh[-1][1]:.5f}"
+        )
+    if len(sl) >= 2 and sl[-1][1] < sl[-2][1]:
+        bearish_signals.append(
+            f"Lower Low {sl[-2][1]:.5f} → {sl[-1][1]:.5f}"
+        )
 
     if not bullish_signals and not bearish_signals:
         return None
