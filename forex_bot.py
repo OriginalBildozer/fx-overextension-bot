@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 from dotenv import load_dotenv   # no-op si .env absent (OK en CI)
-from telegram import Bot
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 
 load_dotenv()
 
@@ -476,7 +476,8 @@ async def send_alert(
     direction  = result["direction"]
     emoji_main = "🔥" if direction == "bullish" else "❄️"
     arrow      = "🔼" if direction == "bullish" else "🔽"
-    tv_url     = f"https://fr.tradingview.com/chart/?symbol={tv_symbol}"
+    tv_url_https = f"https://fr.tradingview.com/chart/?symbol={tv_symbol}"
+    tv_url_app   = f"tradingview://chart/?symbol={tv_symbol}"
 
     signals_text = "\n".join(f"  ✅ `{s}`" for s in result["signals"])
 
@@ -487,14 +488,19 @@ async def send_alert(
         f"*Signaux déclenchés :*\n{signals_text}\n\n"
         f"⚡ *Force du signal :* {result['strength_bar']}\n"
         f"↩️ *Retracement :* `{result['retrace_pct']} %`\n\n"
-        f"[📈 Voir sur TradingView]({tv_url})"
+        f"[📈 Voir sur TradingView]({tv_url_https})"
     )
+
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("📈 Ouvrir dans TradingView", url=tv_url_app),
+    ]])
 
     await bot.send_photo(
         chat_id=TELEGRAM_CHANNEL_ID,
         photo=chart_bytes,
         caption=caption,
         parse_mode="Markdown",
+        reply_markup=keyboard,
     )
     log.info(
         f"✅ Alerte envoyée : {pair} {direction} "
