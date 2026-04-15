@@ -481,8 +481,11 @@ async def send_alert(
 
     signals_text = "\n".join(f"  ✅ `{s}`" for s in result["signals"])
 
+    now_str = datetime.utcnow().strftime("%d/%m/%Y %H:%M")
+
     caption = (
         f"*New overextension on {pair} {emoji_main}*\n\n"
+        f"🕐 `{now_str}`\n"
         f"{arrow} *Direction :* {direction.capitalize()}\n"
         f"💰 *Prix :* `{result['price']}`\n\n"
         f"*Signaux déclenchés :*\n{signals_text}\n\n"
