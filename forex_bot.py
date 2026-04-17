@@ -288,8 +288,12 @@ def detect_overextension(df: pd.DataFrame) -> dict:
         signals   = bearish_signals
 
     # ── Condition ET — retracement ≤ 20 % ────────────────────────────────
+    # Seuil minimum d'impulsion pour que le calcul ait du sens.
+    # En-dessous, le HH/LL seul a déclenché sans mouvement net → filtre inactif.
+    MIN_IMPULSE_FOR_RETRACE = 0.3   # × ATR
+
     impulse_abs = abs(signed_impulse)
-    if impulse_abs > 0:
+    if impulse_abs >= MIN_IMPULSE_FOR_RETRACE * atr:
         if direction == "bullish":
             peak    = float(window["High"].max())
             retrace = (peak - float(price)) / impulse_abs
@@ -297,7 +301,7 @@ def detect_overextension(df: pd.DataFrame) -> dict:
             trough  = float(window["Low"].min())
             retrace = (float(price) - trough) / impulse_abs
     else:
-        retrace = 0.0
+        retrace = 0.0   # impulsion trop faible → retracement non calculable
 
     base["retrace_pct"] = round(retrace * 100, 1)
 

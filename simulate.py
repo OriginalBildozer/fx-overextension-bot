@@ -210,8 +210,9 @@ def simulate(pair: str, target_dt: datetime):
     signals   = bullish_signals if direction == "bullish" else bearish_signals
 
     # ── Retracement (filtre ET) ───────────────────────────────────────────
+    MIN_IMPULSE_FOR_RETRACE = 0.3
     impulse_abs = abs(signed_impulse)
-    if impulse_abs > 0:
+    if impulse_abs >= MIN_IMPULSE_FOR_RETRACE * atr:
         if direction == "bullish":
             peak    = float(window["High"].max())
             retrace = (peak - price) / impulse_abs
@@ -219,7 +220,7 @@ def simulate(pair: str, target_dt: datetime):
             trough  = float(window["Low"].min())
             retrace = (price - trough) / impulse_abs
     else:
-        retrace = 0.0
+        retrace = 0.0   # impulsion trop faible → filtre retracement inactif
 
     retrace_ok = retrace <= MAX_RETRACE_RATIO
 
