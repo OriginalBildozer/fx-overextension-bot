@@ -23,9 +23,8 @@ from forex_bot import (
     ATR_PERIOD, EMA_FAST,
     ATR_MULT_IMPULSE, ATR_MULT_EMA_DIST,
     IMPULSE_WINDOW, MAX_RETRACE_RATIO,
-    SWING_LOOKBACK, SWING_WINDOW,
+    CANDLE_RANGE_LOOKBACK,
     compute_rsi, compute_atr, compute_ema,
-    _find_swing_highs, _find_swing_lows,
     _strength_stars,
 )
 
@@ -122,9 +121,8 @@ def simulate(pair: str, target_dt: datetime):
     df["ATR"]      = compute_atr(df, ATR_PERIOD)
     df["EMA_fast"] = compute_ema(df["Close"], EMA_FAST)
 
-    last     = df.iloc[-1]
-    window   = df.iloc[-(IMPULSE_WINDOW + 1):]
-    swing_df = df.iloc[-SWING_WINDOW:]
+    last   = df.iloc[-1]
+    window = df.iloc[-(IMPULSE_WINDOW + 1):]
 
     rsi             = float(last["RSI"])
     atr             = float(last["ATR"])
@@ -134,71 +132,71 @@ def simulate(pair: str, target_dt: datetime):
     signed_impulse  = price - impulse_start
     ema_dist_signed = price - ema_fast
 
-    sh = _find_swing_highs(swing_df, SWING_LOOKBACK)
-    sl = _find_swing_lows(swing_df, SWING_LOOKBACK)
-
-    hh = (sh[-2][1], sh[-1][1]) if len(sh) >= 2 else None
-    ll = (sl[-2][1], sl[-1][1]) if len(sl) >= 2 else None
+    # Bougie large — range actuel vs moyenne des N précédentes
+    current_range = float(last["High"] - last["Low"])
+    prev_ranges   = [
+        float(df.iloc[-i]["High"] - df.iloc[-i]["Low"])
+        for i in range(2, 2 + CANDLE_RANGE_LOOKBACK)
+    ]
+    avg_prev_range = sum(prev_ranges) / len(prev_ranges) if prev_ranges else 0
+    range_ratio    = current_range / avg_prev_range if avg_prev_range > 0 else 0.0
 
     print(f"{W}  INDICATEURS{RST}")
-    print(f"    Prix          : {B}{price:.5f}{RST}")
-    print(f"    ATR ({ATR_PERIOD})       : {atr:.6f}")
-    print(f"    RSI ({RSI_PERIOD})       : {rsi:.1f}")
-    print(f"    EMA {EMA_FAST}         : {ema_fast:.5f}  (dist brute = {ema_dist_signed:+.5f})")
-    print(f"    Impulsion ({IMPULSE_WINDOW}b) : {signed_impulse:+.5f}  sur {IMPULSE_WINDOW} bougies")
-    if hh:
-        print(f"    Swing Highs   : {hh[0]:.5f} → {hh[1]:.5f}")
-    else:
-        print(f"    Swing Highs   : moins de 2 swings trouvés")
-    if ll:
-        print(f"    Swing Lows    : {ll[0]:.5f} → {ll[1]:.5f}")
-    else:
-        print(f"    Swing Lows    : moins de 2 swings trouvés")
+    print(f"    Prix           : {B}{price:.5f}{RST}")
+    print(f"    ATR ({ATR_PERIOD})        : {atr:.6f}")
+    print(f"    RSI ({RSI_PERIOD})        : {rsi:.1f}")
+    print(f"    EMA {EMA_FAST}          : {ema_fast:.5f}  (dist brute = {ema_dist_signed:+.5f})")
+    print(f"    Impulsion ({IMPULSE_WINDOW}b)  : {signed_impulse:+.5f}  sur {IMPULSE_WINDOW} bougies")
+    print(f"    Range bougie   : {current_range:.6f}  (×{range_ratio:.2f} moy des {CANDLE_RANGE_LOOKBACK} préc.)")
     line()
 
     # ── Évaluation des conditions ─────────────────────────────────────────
     imp_ratio  = signed_impulse / atr  if atr else 0
     ema_ratio  = ema_dist_signed / atr if atr else 0
 
-    rsi_bull   = rsi > RSI_OVERBOUGHT
-    rsi_bear   = rsi < RSI_OVERSOLD
-    imp_bull   = imp_ratio  >  ATR_MULT_IMPULSE
-    imp_bear   = imp_ratio  < -ATR_MULT_IMPULSE
-    ema_bull   = ema_ratio  >  ATR_MULT_EMA_DIST
-    ema_bear   = ema_ratio  < -ATR_MULT_EMA_DIST
-    hh_trigger = bool(hh and hh[1] > hh[0])
-    ll_trigger = bool(ll and ll[1] < ll[0])
+    rsi_bull        = rsi > RSI_OVERBOUGHT
+    rsi_bear        = rsi < RSI_OVERSOLD
+    imp_bull        = imp_ratio >  ATR_MULT_IMPULSE
+    imp_bear        = imp_ratio < -ATR_MULT_IMPULSE
+    ema_bull        = ema_ratio >  ATR_MULT_EMA_DIST
+    ema_bear        = ema_ratio < -ATR_MULT_EMA_DIST
+    range_trigger   = range_ratio > 1.0
+    range_direction = "bullish" if float(last["Close"]) >= float(last["Open"]) else "bearish"
 
     # Calcul du gap (combien il manque pour déclencher)
     def gap_rsi_bull():  return f"manque {RSI_OVERBOUGHT - rsi:.1f} pts"
     def gap_rsi_bear():  return f"manque {rsi - RSI_OVERSOLD:.1f} pts"
     def gap_imp():       return f"manque {ATR_MULT_IMPULSE - abs(imp_ratio):.2f}×ATR"
     def gap_ema():       return f"manque {ATR_MULT_EMA_DIST - abs(ema_ratio):.2f}×ATR"
+    def gap_range():     return f"manque {1.0 - range_ratio:.2f}× (actuel ×{range_ratio:.2f})"
 
     print(f"{W}  CONDITIONS OR{RST}  (1 seule suffit)")
-    print(f"    ① RSI > {RSI_OVERBOUGHT} (haussier)   : RSI={rsi:.1f}  {ok(rsi_bull)}"
+    print(f"    ① RSI > {RSI_OVERBOUGHT} (haussier)    : RSI={rsi:.1f}  {ok(rsi_bull)}"
           + (f"  {DIM}{gap_rsi_bull()}{RST}" if not rsi_bull else ""))
-    print(f"       RSI < {RSI_OVERSOLD} (baissier)   : RSI={rsi:.1f}  {ok(rsi_bear)}"
+    print(f"       RSI < {RSI_OVERSOLD} (baissier)    : RSI={rsi:.1f}  {ok(rsi_bear)}"
           + (f"  {DIM}{gap_rsi_bear()}{RST}" if not rsi_bear else ""))
-    print(f"    ② Impulsion > {ATR_MULT_IMPULSE}×ATR  : {imp_ratio:+.2f}×ATR  {ok(imp_bull or imp_bear)}"
+    print(f"    ② Impulsion > {ATR_MULT_IMPULSE}×ATR   : {imp_ratio:+.2f}×ATR  {ok(imp_bull or imp_bear)}"
           + (f"  {DIM}{gap_imp()}{RST}" if not (imp_bull or imp_bear) else ""))
-    print(f"    ③ EMA dist  > {ATR_MULT_EMA_DIST}×ATR  : {ema_ratio:+.2f}×ATR  {ok(ema_bull or ema_bear)}"
+    print(f"    ③ EMA dist  > {ATR_MULT_EMA_DIST}×ATR   : {ema_ratio:+.2f}×ATR  {ok(ema_bull or ema_bear)}"
           + (f"  {DIM}{gap_ema()}{RST}" if not (ema_bull or ema_bear) else ""))
-    print(f"    ④ Higher High             : {f'{hh[0]:.5f}→{hh[1]:.5f}' if hh else '—'}  {ok(hh_trigger)}")
-    print(f"       Lower Low              : {f'{ll[0]:.5f}→{ll[1]:.5f}' if ll else '—'}  {ok(ll_trigger)}")
+    print(f"    ④ Bougie large > moy {CANDLE_RANGE_LOOKBACK} préc. : ×{range_ratio:.2f}  [{range_direction}]  {ok(range_trigger)}"
+          + (f"  {DIM}{gap_range()}{RST}" if not range_trigger else ""))
     line()
 
     # ── Résumé direction ──────────────────────────────────────────────────
     bullish_signals = []
     bearish_signals = []
-    if rsi_bull:   bullish_signals.append(f"RSI {rsi:.1f}")
-    if rsi_bear:   bearish_signals.append(f"RSI {rsi:.1f}")
-    if imp_bull:   bullish_signals.append(f"Impulsion +{imp_ratio:.2f}×")
-    if imp_bear:   bearish_signals.append(f"Impulsion {imp_ratio:.2f}×")
-    if ema_bull:   bullish_signals.append(f"EMA +{ema_ratio:.2f}×")
-    if ema_bear:   bearish_signals.append(f"EMA {ema_ratio:.2f}×")
-    if hh_trigger: bullish_signals.append("Higher High")
-    if ll_trigger: bearish_signals.append("Lower Low")
+    if rsi_bull:  bullish_signals.append(f"RSI {rsi:.1f}")
+    if rsi_bear:  bearish_signals.append(f"RSI {rsi:.1f}")
+    if imp_bull:  bullish_signals.append(f"Impulsion +{imp_ratio:.2f}×")
+    if imp_bear:  bearish_signals.append(f"Impulsion {imp_ratio:.2f}×")
+    if ema_bull:  bullish_signals.append(f"EMA +{ema_ratio:.2f}×")
+    if ema_bear:  bearish_signals.append(f"EMA {ema_ratio:.2f}×")
+    if range_trigger:
+        if range_direction == "bullish":
+            bullish_signals.append(f"Bougie large ×{range_ratio:.2f}")
+        else:
+            bearish_signals.append(f"Bougie large ×{range_ratio:.2f}")
 
     any_or = bool(bullish_signals or bearish_signals)
 

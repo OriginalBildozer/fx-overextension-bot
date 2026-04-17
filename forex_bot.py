@@ -98,9 +98,8 @@ ATR_MULT_EMA_DIST   = 2.0    # Distance EMA doit dépasser N × ATR
 
 IMPULSE_WINDOW      = 3      # Bougies sur lesquelles mesurer l'impulsion
 MAX_RETRACE_RATIO   = 0.20   # Retracement max toléré — condition ET obligatoire
-SWING_LOOKBACK      = 3      # Bougies de chaque côté pour valider un swing point
-SWING_WINDOW        = 168    # Profondeur de recherche des swing points (7j × 24h)
-# Logique : (RSI OU Impulsion OU EMA-dist OU HH/LL)  ET  (retracement ≤ 20 %)
+CANDLE_RANGE_LOOKBACK = 3    # Nombre de bougies précédentes pour la moyenne range
+# Logique : (RSI OU Impulsion OU EMA-dist OU Bougie large)  ET  (retracement ≤ 20 %)
 
 COOLDOWN_HOURS      = 4      # Délai avant de re-alerter même paire/direction
 CHART_RIGHT_MARGIN  = 12     # Espace vide à droite (12h à venir)
@@ -160,28 +159,6 @@ def fetch_h1_data(yf_ticker: str) -> pd.DataFrame | None:
         return None
 
 
-# ─── Swing points (Higher High / Lower Low) ──────────────────────────────────
-
-def _find_swing_highs(df: pd.DataFrame, n: int = SWING_LOOKBACK) -> list[tuple[int, float]]:
-    """Swing high : bougie dont le High est le maximum sur N bougies de chaque côté."""
-    highs  = df["High"].values
-    swings = []
-    for i in range(n, len(highs) - n):
-        if highs[i] == max(highs[i - n: i + n + 1]):
-            swings.append((i, float(highs[i])))
-    return swings
-
-
-def _find_swing_lows(df: pd.DataFrame, n: int = SWING_LOOKBACK) -> list[tuple[int, float]]:
-    """Swing low : bougie dont le Low est le minimum sur N bougies de chaque côté."""
-    lows   = df["Low"].values
-    swings = []
-    for i in range(n, len(lows) - n):
-        if lows[i] == min(lows[i - n: i + n + 1]):
-            swings.append((i, float(lows[i])))
-    return swings
-
-
 # ─── Détection de l'overextension ────────────────────────────────────────────
 
 def _strength_stars(n: int, total: int = 4) -> str:
@@ -198,7 +175,7 @@ def detect_overextension(df: pd.DataFrame) -> dict:
     Retourne TOUJOURS un dict. Vérifier result["detected"] pour savoir
     si une overextension a été trouvée.
 
-    Logique : (RSI OU Impulsion OU EMA-dist OU HH/LL)  ET  retracement ≤ 20 %
+    Logique : (RSI OU Impulsion OU EMA-dist OU Bougie large)  ET  retracement ≤ 20 %
     """
     df = df.copy()
     df["RSI"]      = compute_rsi(df["Close"], RSI_PERIOD)
@@ -216,16 +193,15 @@ def detect_overextension(df: pd.DataFrame) -> dict:
 
     # Valeurs de base toujours retournées pour les logs
     base: dict = {
-        "detected":     False,
-        "reject_reason": "",
-        "price":        round(float(price), 5),
-        "atr":          round(float(atr), 6) if not pd.isna(atr) else 0,
-        "rsi":          round(float(rsi), 1) if not pd.isna(rsi) else 0,
-        "impulse_atr":  0.0,
-        "ema_dist_atr": 0.0,
-        "hh":           None,   # (prev, last) ou None
-        "ll":           None,   # (prev, last) ou None
-        "retrace_pct":  0.0,
+        "detected":        False,
+        "reject_reason":   "",
+        "price":           round(float(price), 5),
+        "atr":             round(float(atr), 6) if not pd.isna(atr) else 0,
+        "rsi":             round(float(rsi), 1) if not pd.isna(rsi) else 0,
+        "impulse_atr":     0.0,
+        "ema_dist_atr":    0.0,
+        "candle_range_ratio": 0.0,   # range actuel / moyenne des N précédentes
+        "retrace_pct":     0.0,
     }
 
     if pd.isna(rsi) or pd.isna(atr) or atr == 0:
@@ -260,20 +236,27 @@ def detect_overextension(df: pd.DataFrame) -> dict:
     elif ema_dist_signed < -ATR_MULT_EMA_DIST * atr:
         bearish_signals.append(f"EMA dist {ema_dist_signed/atr:.1f}×ATR")
 
-    # 4 — HH / LL
-    swing_df = df.iloc[-SWING_WINDOW:]
-    sh = _find_swing_highs(swing_df)
-    sl = _find_swing_lows(swing_df)
+    # 4 — Bougie courante plus large que la moyenne des N précédentes
+    current_range = float(last["High"] - last["Low"])
+    prev_ranges   = [
+        float(df.iloc[-i]["High"] - df.iloc[-i]["Low"])
+        for i in range(2, 2 + CANDLE_RANGE_LOOKBACK)
+    ]
+    avg_prev_range = sum(prev_ranges) / len(prev_ranges) if prev_ranges else 0
 
-    if len(sh) >= 2:
-        base["hh"] = (round(sh[-2][1], 5), round(sh[-1][1], 5))
-        if sh[-1][1] > sh[-2][1]:
-            bullish_signals.append(f"Higher High {sh[-2][1]:.5f} → {sh[-1][1]:.5f}")
-
-    if len(sl) >= 2:
-        base["ll"] = (round(sl[-2][1], 5), round(sl[-1][1], 5))
-        if sl[-1][1] < sl[-2][1]:
-            bearish_signals.append(f"Lower Low {sl[-2][1]:.5f} → {sl[-1][1]:.5f}")
+    if avg_prev_range > 0:
+        range_ratio = current_range / avg_prev_range
+        base["candle_range_ratio"] = round(range_ratio, 2)
+        if range_ratio > 1.0:
+            # Direction = corps de la bougie (close vs open)
+            if float(last["Close"]) >= float(last["Open"]):
+                bullish_signals.append(
+                    f"Bougie large ×{range_ratio:.2f} moy ({current_range/atr:.2f}×ATR)"
+                )
+            else:
+                bearish_signals.append(
+                    f"Bougie large ×{range_ratio:.2f} moy ({current_range/atr:.2f}×ATR)"
+                )
 
     if not bullish_signals and not bearish_signals:
         base["reject_reason"] = "aucun signal OR"
@@ -536,7 +519,7 @@ async def scan_all(bot: Bot) -> None:
     log.info(f"  ① RSI extrême     : RSI > {RSI_OVERBOUGHT} (haussier)  ou  RSI < {RSI_OVERSOLD} (baissier)  [période {RSI_PERIOD}]")
     log.info(f"  ② Impulsion forte : move net sur {IMPULSE_WINDOW} bougies  >  {ATR_MULT_IMPULSE}× ATR")
     log.info(f"  ③ Distance EMA    : |prix − EMA{EMA_FAST}|  >  {ATR_MULT_EMA_DIST}× ATR")
-    log.info(f"  ④ HH / LL         : swing high/low sur {SWING_WINDOW} bougies ({SWING_WINDOW//24}j)  avec lookback ±{SWING_LOOKBACK} bougies")
+    log.info(f"  ④ Bougie large    : range bougie actuelle  >  moyenne range des {CANDLE_RANGE_LOOKBACK} bougies précédentes")
     log.info(f"  [ET] Retracement  : pullback depuis l'extrême  ≤  {int(MAX_RETRACE_RATIO*100)}% de l'impulsion")
     log.info(f"  [COOLDOWN]        : {COOLDOWN_HOURS}h par paire/direction/signaux identiques")
     log.info("=" * 60)
@@ -556,13 +539,10 @@ async def scan_all(bot: Bot) -> None:
             # ── Log détaillé des indicateurs ──────────────────────────────
             ok  = "✅"
             nok = "❌"
-            rsi_ok  = ok if abs(result["rsi"] - 50) >= (50 - RSI_OVERSOLD) else nok
-            imp_ok  = ok if abs(result["impulse_atr"]) >= ATR_MULT_IMPULSE  else nok
-            ema_ok  = ok if abs(result["ema_dist_atr"]) >= ATR_MULT_EMA_DIST else nok
-            hh_ok   = ok if result["hh"] and result["hh"][1] > result["hh"][0] else nok
-            ll_ok   = ok if result["ll"] and result["ll"][1] < result["ll"][0] else nok
-            hh_str  = f"{result['hh'][0]}→{result['hh'][1]}" if result["hh"] else "—"
-            ll_str  = f"{result['ll'][0]}→{result['ll'][1]}" if result["ll"] else "—"
+            rsi_ok   = ok if abs(result["rsi"] - 50) >= (50 - RSI_OVERSOLD)     else nok
+            imp_ok   = ok if abs(result["impulse_atr"]) >= ATR_MULT_IMPULSE    else nok
+            ema_ok   = ok if abs(result["ema_dist_atr"]) >= ATR_MULT_EMA_DIST  else nok
+            range_ok = ok if result["candle_range_ratio"] > 1.0                else nok
 
             log.info(
                 f"  {pair:<12} | "
@@ -570,7 +550,7 @@ async def scan_all(bot: Bot) -> None:
                 f"RSI={result['rsi']}{rsi_ok}  "
                 f"Imp={result['impulse_atr']:+.2f}×{imp_ok}  "
                 f"EMA={result['ema_dist_atr']:+.2f}×{ema_ok}  "
-                f"HH={hh_str}{hh_ok}  LL={ll_str}{ll_ok}  "
+                f"Range=×{result['candle_range_ratio']}{range_ok}  "
                 f"Retrace={result['retrace_pct']}%"
             )
 
