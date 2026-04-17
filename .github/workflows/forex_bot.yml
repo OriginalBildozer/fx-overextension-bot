@@ -3,7 +3,7 @@ name: 📈 Forex Overextension Scanner
 # ─── Déclencheurs ─────────────────────────────────────────────────────────────
 on:
   schedule:
-    - cron: "*/15 * * * *"   # Toutes les 15 minutes
+    - cron: "*/15 * * * 1-5"  # Toutes les 15 min, lundi→vendredi (forex market hours)
   workflow_dispatch:          # Déclenchement manuel depuis l'UI GitHub
 
 # ─── Permissions minimales ────────────────────────────────────────────────────
