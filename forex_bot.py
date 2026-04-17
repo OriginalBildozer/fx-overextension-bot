@@ -193,20 +193,12 @@ def _strength_stars(n: int, total: int = 4) -> str:
     return f"{color} {'★' * n}{'☆' * (total - n)}  ({n}/{total})"
 
 
-def detect_overextension(df: pd.DataFrame) -> dict | None:
+def detect_overextension(df: pd.DataFrame) -> dict:
     """
-    Retourne un dict si overextension détectée, sinon None.
+    Retourne TOUJOURS un dict. Vérifier result["detected"] pour savoir
+    si une overextension a été trouvée.
 
     Logique : (RSI OU Impulsion OU EMA-dist OU HH/LL)  ET  retracement ≤ 20 %
-      • RSI extrême    → RSI > 67  ou  < 33
-      • Impulsion      → move net des 6 dernières bougies > 1× ATR
-      • Distance EMA20 → |prix − EMA20| > 1× ATR
-      • Higher High    → dernier swing high > swing high précédent  (bullish)
-      • Lower Low      → dernier swing low  < swing low  précédent  (bearish)
-      • [ET] Retracement depuis l'extrême ≤ 20 % de l'impulsion (filtre obligatoire)
-
-    Direction = côté ayant le plus de signaux OR ; égalité → priorité au RSI.
-    Force du signal = nombre de critères OR déclenchés (1 à 4).
     """
     df = df.copy()
     df["RSI"]      = compute_rsi(df["Close"], RSI_PERIOD)
@@ -222,52 +214,72 @@ def detect_overextension(df: pd.DataFrame) -> dict | None:
     price    = last["Close"]
     ema_fast = last["EMA_fast"]
 
+    # Valeurs de base toujours retournées pour les logs
+    base: dict = {
+        "detected":     False,
+        "reject_reason": "",
+        "price":        round(float(price), 5),
+        "atr":          round(float(atr), 6) if not pd.isna(atr) else 0,
+        "rsi":          round(float(rsi), 1) if not pd.isna(rsi) else 0,
+        "impulse_atr":  0.0,
+        "ema_dist_atr": 0.0,
+        "hh":           None,   # (prev, last) ou None
+        "ll":           None,   # (prev, last) ou None
+        "retrace_pct":  0.0,
+    }
+
     if pd.isna(rsi) or pd.isna(atr) or atr == 0:
-        return None
+        base["reject_reason"] = "indicateurs invalides"
+        return base
 
     impulse_start   = window.iloc[0]["Close"]
-    signed_impulse  = float(price - impulse_start)   # + = haussier
-    ema_dist_signed = float(price - ema_fast)         # + = au-dessus EMA
+    signed_impulse  = float(price - impulse_start)
+    ema_dist_signed = float(price - ema_fast)
+
+    base["impulse_atr"]  = round(float(signed_impulse / atr), 2)
+    base["ema_dist_atr"] = round(float(ema_dist_signed / atr), 2)
 
     # ── Critères OR ───────────────────────────────────────────────────────
     bullish_signals, bearish_signals = [], []
 
-    # 1 — RSI extrême
+    # 1 — RSI
     if rsi > RSI_OVERBOUGHT:
         bullish_signals.append(f"RSI {rsi:.1f} > {RSI_OVERBOUGHT}")
     elif rsi < RSI_OVERSOLD:
         bearish_signals.append(f"RSI {rsi:.1f} < {RSI_OVERSOLD}")
 
-    # 2 — Impulsion > 1× ATR
+    # 2 — Impulsion
     if signed_impulse > ATR_MULT_IMPULSE * atr:
         bullish_signals.append(f"Impulsion +{signed_impulse/atr:.1f}×ATR")
     elif signed_impulse < -ATR_MULT_IMPULSE * atr:
         bearish_signals.append(f"Impulsion {signed_impulse/atr:.1f}×ATR")
 
-    # 3 — Distance EMA20 > 1× ATR
+    # 3 — Distance EMA20
     if ema_dist_signed > ATR_MULT_EMA_DIST * atr:
         bullish_signals.append(f"EMA dist +{ema_dist_signed/atr:.1f}×ATR")
     elif ema_dist_signed < -ATR_MULT_EMA_DIST * atr:
         bearish_signals.append(f"EMA dist {ema_dist_signed/atr:.1f}×ATR")
 
-    # 4 — Higher High / Lower Low
+    # 4 — HH / LL
     swing_df = df.iloc[-SWING_WINDOW:]
     sh = _find_swing_highs(swing_df)
     sl = _find_swing_lows(swing_df)
 
-    if len(sh) >= 2 and sh[-1][1] > sh[-2][1]:
-        bullish_signals.append(
-            f"Higher High {sh[-2][1]:.5f} → {sh[-1][1]:.5f}"
-        )
-    if len(sl) >= 2 and sl[-1][1] < sl[-2][1]:
-        bearish_signals.append(
-            f"Lower Low {sl[-2][1]:.5f} → {sl[-1][1]:.5f}"
-        )
+    if len(sh) >= 2:
+        base["hh"] = (round(sh[-2][1], 5), round(sh[-1][1], 5))
+        if sh[-1][1] > sh[-2][1]:
+            bullish_signals.append(f"Higher High {sh[-2][1]:.5f} → {sh[-1][1]:.5f}")
+
+    if len(sl) >= 2:
+        base["ll"] = (round(sl[-2][1], 5), round(sl[-1][1], 5))
+        if sl[-1][1] < sl[-2][1]:
+            bearish_signals.append(f"Lower Low {sl[-2][1]:.5f} → {sl[-1][1]:.5f}")
 
     if not bullish_signals and not bearish_signals:
-        return None
+        base["reject_reason"] = "aucun signal OR"
+        return base
 
-    # Direction = côté le plus représenté ; égalité → RSI prioritaire
+    # Direction
     if len(bullish_signals) >= len(bearish_signals):
         direction = "bullish"
         signals   = bullish_signals
@@ -275,7 +287,7 @@ def detect_overextension(df: pd.DataFrame) -> dict | None:
         direction = "bearish"
         signals   = bearish_signals
 
-    # ── Condition ET — retracement depuis l'extrême ≤ 20 % ───────────────
+    # ── Condition ET — retracement ≤ 20 % ────────────────────────────────
     impulse_abs = abs(signed_impulse)
     if impulse_abs > 0:
         if direction == "bullish":
@@ -285,25 +297,23 @@ def detect_overextension(df: pd.DataFrame) -> dict | None:
             trough  = float(window["Low"].min())
             retrace = (float(price) - trough) / impulse_abs
     else:
-        retrace = 0.0   # pas d'impulsion mesurable → filtre inactif
+        retrace = 0.0
+
+    base["retrace_pct"] = round(retrace * 100, 1)
 
     if retrace > MAX_RETRACE_RATIO:
-        return None     # le mouvement a déjà trop corrigé
+        base["reject_reason"] = f"retracement {retrace*100:.1f}% > {MAX_RETRACE_RATIO*100:.0f}%"
+        return base
 
-    strength = len(signals)   # 1, 2 ou 3
-
-    return {
+    strength = len(signals)
+    base.update({
+        "detected":     True,
         "direction":    direction,
         "signals":      signals,
         "strength":     strength,
         "strength_bar": _strength_stars(strength),
-        "rsi":          round(float(rsi), 1),
-        "impulse_atr":  round(float(signed_impulse / atr), 2),
-        "ema_dist_atr": round(float(ema_dist_signed / atr), 2),
-        "retrace_pct":  round(retrace * 100, 1),
-        "price":        round(float(price), 5),
-        "atr":          round(float(atr), 6),
-    }
+    })
+    return base
 
 
 # ─── Génération du graphique ──────────────────────────────────────────────────
@@ -517,6 +527,14 @@ async def scan_all(bot: Bot) -> None:
     log.info("=" * 60)
     log.info(f"Scan démarré — {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC")
     log.info(f"Paires surveillées : {len(FOREX_PAIRS)}")
+    log.info("─" * 60)
+    log.info("CONDITIONS DE DÉCLENCHEMENT (logique OR + filtre ET) :")
+    log.info(f"  ① RSI extrême     : RSI > {RSI_OVERBOUGHT} (haussier)  ou  RSI < {RSI_OVERSOLD} (baissier)  [période {RSI_PERIOD}]")
+    log.info(f"  ② Impulsion forte : move net sur {IMPULSE_WINDOW} bougies  >  {ATR_MULT_IMPULSE}× ATR")
+    log.info(f"  ③ Distance EMA    : |prix − EMA{EMA_FAST}|  >  {ATR_MULT_EMA_DIST}× ATR")
+    log.info(f"  ④ HH / LL         : swing high/low sur {SWING_WINDOW} bougies ({SWING_WINDOW//24}j)  avec lookback ±{SWING_LOOKBACK} bougies")
+    log.info(f"  [ET] Retracement  : pullback depuis l'extrême  ≤  {int(MAX_RETRACE_RATIO*100)}% de l'impulsion")
+    log.info(f"  [COOLDOWN]        : {COOLDOWN_HOURS}h par paire/direction/signaux identiques")
     log.info("=" * 60)
 
     state       = load_alert_state()
@@ -526,22 +544,46 @@ async def scan_all(bot: Bot) -> None:
         try:
             df = fetch_h1_data(info["yf"])
             if df is None:
+                log.info(f"  {pair:<12} | ⚠️  données indisponibles")
                 continue
 
             result = detect_overextension(df)
-            if result is None:
-                log.info(f"  {pair:<12} → ok, aucune overextension")
+
+            # ── Log détaillé des indicateurs ──────────────────────────────
+            ok  = "✅"
+            nok = "❌"
+            rsi_ok  = ok if abs(result["rsi"] - 50) >= (50 - RSI_OVERSOLD) else nok
+            imp_ok  = ok if abs(result["impulse_atr"]) >= ATR_MULT_IMPULSE  else nok
+            ema_ok  = ok if abs(result["ema_dist_atr"]) >= ATR_MULT_EMA_DIST else nok
+            hh_ok   = ok if result["hh"] and result["hh"][1] > result["hh"][0] else nok
+            ll_ok   = ok if result["ll"] and result["ll"][1] < result["ll"][0] else nok
+            hh_str  = f"{result['hh'][0]}→{result['hh'][1]}" if result["hh"] else "—"
+            ll_str  = f"{result['ll'][0]}→{result['ll'][1]}" if result["ll"] else "—"
+
+            log.info(
+                f"  {pair:<12} | "
+                f"Prix={result['price']}  ATR={result['atr']}  "
+                f"RSI={result['rsi']}{rsi_ok}  "
+                f"Imp={result['impulse_atr']:+.2f}×{imp_ok}  "
+                f"EMA={result['ema_dist_atr']:+.2f}×{ema_ok}  "
+                f"HH={hh_str}{hh_ok}  LL={ll_str}{ll_ok}  "
+                f"Retrace={result['retrace_pct']}%"
+            )
+
+            # ── Résultat de la détection ───────────────────────────────────
+            if not result["detected"]:
+                log.info(f"  {pair:<12} | ⛔ non déclenché — {result['reject_reason']}")
                 continue
 
             direction = result["direction"]
             log.info(
-                f"  {pair:<12} → 🚨 OVEREXTENSION {direction.upper()} "
-                f"| RSI={result['rsi']} | {result['impulse_atr']}×ATR "
-                f"| EMA dist={result['ema_dist_atr']}×ATR"
+                f"  {pair:<12} | 🚨 OVEREXTENSION {direction.upper()} "
+                f"— {result['strength_bar']} "
+                f"— signaux : {', '.join(result['signals'])}"
             )
 
             if is_on_cooldown(state, pair, direction, result["signals"]):
-                log.info(f"  {pair:<12} → cooldown actif (signaux identiques), pas d'alerte")
+                log.info(f"  {pair:<12} | 🔒 cooldown actif (signaux identiques) — message non envoyé")
                 continue
 
             chart_bytes = generate_chart(df, pair, direction)
@@ -549,11 +591,12 @@ async def scan_all(bot: Bot) -> None:
             mark_alerted(state, pair, direction, result["signals"])
             save_alert_state(state)
             alerts_sent += 1
+            log.info(f"  {pair:<12} | ✅ message Telegram envoyé")
 
-            await asyncio.sleep(1.5)   # éviter le flood Telegram
+            await asyncio.sleep(1.5)
 
         except Exception as exc:
-            log.error(f"  {pair:<12} → erreur inattendue : {exc}", exc_info=True)
+            log.error(f"  {pair:<12} | 💥 erreur inattendue : {exc}", exc_info=True)
 
     # Séparateur de fin de salve
     if alerts_sent > 0:
