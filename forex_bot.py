@@ -387,7 +387,7 @@ def generate_chart(df: pd.DataFrame, pair: str, direction: str) -> bytes:
                 x=i,
                 color="#4A4E6A",
                 linewidth=0.9,
-                linestyle=":",
+                linestyle="--",
                 alpha=0.85,
                 zorder=1,
             )
@@ -405,7 +405,7 @@ def generate_chart(df: pd.DataFrame, pair: str, direction: str) -> bytes:
         x=xmax - 0.5,
         color="#778899",
         linewidth=1.1,
-        linestyle="--",
+        linestyle=":",
         alpha=0.75,
         zorder=2,
     )
