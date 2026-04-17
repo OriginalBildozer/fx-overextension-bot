@@ -201,7 +201,6 @@ def detect_overextension(df: pd.DataFrame) -> dict:
         "impulse_atr":     0.0,
         "ema_dist_atr":    0.0,
         "candle_range_ratio": 0.0,   # range actuel / moyenne des N précédentes
-        "ema_range_ratio":  0.0,     # |ema_dist| / range bougie actuelle
         "retrace_pct":     0.0,
     }
 
@@ -259,16 +258,18 @@ def detect_overextension(df: pd.DataFrame) -> dict:
                     f"Bougie large ×{range_ratio:.2f} moy ({current_range/atr:.2f}×ATR)"
                 )
 
-    # 5 — Distance EMA > taille de la bougie courante
-    ema_dist_abs = abs(ema_dist_signed)
-    if current_range > 0:
-        ema_range_ratio = ema_dist_abs / current_range
-        base["ema_range_ratio"] = round(ema_range_ratio, 2)
-        if ema_dist_abs > current_range:
-            if ema_dist_signed > 0:
-                bullish_signals.append(f"EMA dist > range ×{ema_range_ratio:.2f} bougie")
-            else:
-                bearish_signals.append(f"EMA dist > range ×{ema_range_ratio:.2f} bougie")
+    # 5 — (EMA dist > 2×ATR) ET (bougie ≥ 1.5× moy range) simultanément
+    ema_cond  = abs(ema_dist_signed) > ATR_MULT_EMA_DIST * atr
+    range_cond = avg_prev_range > 0 and (current_range / avg_prev_range) >= 1.5
+    if ema_cond and range_cond:
+        if ema_dist_signed > 0:
+            bullish_signals.append(
+                f"EMA+Range ({ema_dist_signed/atr:+.2f}×ATR & ×{current_range/avg_prev_range:.2f} moy)"
+            )
+        else:
+            bearish_signals.append(
+                f"EMA+Range ({ema_dist_signed/atr:+.2f}×ATR & ×{current_range/avg_prev_range:.2f} moy)"
+            )
 
     if not bullish_signals and not bearish_signals:
         base["reject_reason"] = "aucun signal OR"
@@ -530,7 +531,7 @@ async def scan_all(bot: Bot) -> None:
     log.info(f"  ② Impulsion forte : move net sur {IMPULSE_WINDOW} bougies  >  {ATR_MULT_IMPULSE}× ATR")
     log.info(f"  ③ Distance EMA    : |prix − EMA{EMA_FAST}|  >  {ATR_MULT_EMA_DIST}× ATR")
     log.info(f"  ④ Bougie large    : range bougie actuelle  ≥  1.5× moyenne range des {CANDLE_RANGE_LOOKBACK} bougies précédentes")
-    log.info(f"  ⑤ EMA > range     : |prix − EMA{EMA_FAST}|  >  range (High−Low) de la bougie actuelle")
+    log.info(f"  ⑤ EMA + Range     : (|prix − EMA{EMA_FAST}| > {ATR_MULT_EMA_DIST}×ATR)  ET  (range bougie ≥ 1.5× moy {CANDLE_RANGE_LOOKBACK} préc.)")
     log.info(f"  [ET] Retracement  : pullback depuis l'extrême  ≤  {int(MAX_RETRACE_RATIO*100)}% de l'impulsion")
     log.info(f"  [COOLDOWN]        : {COOLDOWN_HOURS}h par paire/direction/signaux identiques")
     log.info("=" * 60)
@@ -550,11 +551,12 @@ async def scan_all(bot: Bot) -> None:
             # ── Log détaillé des indicateurs ──────────────────────────────
             ok  = "✅"
             nok = "❌"
-            rsi_ok    = ok if abs(result["rsi"] - 50) >= (50 - RSI_OVERSOLD)    else nok
-            imp_ok    = ok if abs(result["impulse_atr"]) >= ATR_MULT_IMPULSE   else nok
-            ema_ok    = ok if abs(result["ema_dist_atr"]) >= ATR_MULT_EMA_DIST else nok
-            range_ok  = ok if result["candle_range_ratio"] >= 1.5              else nok
-            emarna_ok = ok if result["ema_range_ratio"] > 1.0                  else nok
+            rsi_ok      = ok if abs(result["rsi"] - 50) >= (50 - RSI_OVERSOLD)    else nok
+            imp_ok      = ok if abs(result["impulse_atr"]) >= ATR_MULT_IMPULSE   else nok
+            ema_ok      = ok if abs(result["ema_dist_atr"]) >= ATR_MULT_EMA_DIST else nok
+            range_ok    = ok if result["candle_range_ratio"] >= 1.5              else nok
+            ema_rng_ok  = ok if (abs(result["ema_dist_atr"]) >= ATR_MULT_EMA_DIST
+                                 and result["candle_range_ratio"] >= 1.5)        else nok
 
             log.info(
                 f"  {pair:<12} | "
@@ -563,7 +565,7 @@ async def scan_all(bot: Bot) -> None:
                 f"Imp={result['impulse_atr']:+.2f}×{imp_ok}  "
                 f"EMA={result['ema_dist_atr']:+.2f}×{ema_ok}  "
                 f"Range=×{result['candle_range_ratio']}{range_ok}  "
-                f"EMArng=×{result['ema_range_ratio']}{emarna_ok}  "
+                f"EMA+Rng{ema_rng_ok}  "
                 f"Retrace={result['retrace_pct']}%"
             )
 
