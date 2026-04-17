@@ -247,7 +247,7 @@ def detect_overextension(df: pd.DataFrame) -> dict:
     if avg_prev_range > 0:
         range_ratio = current_range / avg_prev_range
         base["candle_range_ratio"] = round(range_ratio, 2)
-        if range_ratio > 1.0:
+        if range_ratio >= 1.5:
             # Direction = corps de la bougie (close vs open)
             if float(last["Close"]) >= float(last["Open"]):
                 bullish_signals.append(
@@ -486,8 +486,7 @@ async def send_alert(
         f"💰 *Prix :* `{result['price']}`\n\n"
         f"*Signaux déclenchés :*\n{signals_text}\n\n"
         f"⚡ *Force du signal :* {result['strength_bar']}\n"
-        f"↩️ *Retracement :* `{result['retrace_pct']} %`\n\n"
-        f"[📈 Voir sur TradingView]({tv_url_https})"
+        f"↩️ *Retracement :* `{result['retrace_pct']} %`"
     )
 
     keyboard = InlineKeyboardMarkup([[

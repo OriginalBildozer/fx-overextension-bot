@@ -160,7 +160,7 @@ def simulate(pair: str, target_dt: datetime):
     imp_bear        = imp_ratio < -ATR_MULT_IMPULSE
     ema_bull        = ema_ratio >  ATR_MULT_EMA_DIST
     ema_bear        = ema_ratio < -ATR_MULT_EMA_DIST
-    range_trigger   = range_ratio > 1.0
+    range_trigger   = range_ratio >= 1.5
     range_direction = "bullish" if float(last["Close"]) >= float(last["Open"]) else "bearish"
 
     # Calcul du gap (combien il manque pour déclencher)
@@ -168,7 +168,7 @@ def simulate(pair: str, target_dt: datetime):
     def gap_rsi_bear():  return f"manque {rsi - RSI_OVERSOLD:.1f} pts"
     def gap_imp():       return f"manque {ATR_MULT_IMPULSE - abs(imp_ratio):.2f}×ATR"
     def gap_ema():       return f"manque {ATR_MULT_EMA_DIST - abs(ema_ratio):.2f}×ATR"
-    def gap_range():     return f"manque {1.0 - range_ratio:.2f}× (actuel ×{range_ratio:.2f})"
+    def gap_range():     return f"manque {1.5 - range_ratio:.2f}× (actuel ×{range_ratio:.2f})"
 
     print(f"{W}  CONDITIONS OR{RST}  (1 seule suffit)")
     print(f"    ① RSI > {RSI_OVERBOUGHT} (haussier)    : RSI={rsi:.1f}  {ok(rsi_bull)}"
@@ -179,7 +179,7 @@ def simulate(pair: str, target_dt: datetime):
           + (f"  {DIM}{gap_imp()}{RST}" if not (imp_bull or imp_bear) else ""))
     print(f"    ③ EMA dist  > {ATR_MULT_EMA_DIST}×ATR   : {ema_ratio:+.2f}×ATR  {ok(ema_bull or ema_bear)}"
           + (f"  {DIM}{gap_ema()}{RST}" if not (ema_bull or ema_bear) else ""))
-    print(f"    ④ Bougie large > moy {CANDLE_RANGE_LOOKBACK} préc. : ×{range_ratio:.2f}  [{range_direction}]  {ok(range_trigger)}"
+    print(f"    ④ Bougie large ≥ 1.5× moy {CANDLE_RANGE_LOOKBACK} préc. : ×{range_ratio:.2f}  [{range_direction}]  {ok(range_trigger)}"
           + (f"  {DIM}{gap_range()}{RST}" if not range_trigger else ""))
     line()
 
