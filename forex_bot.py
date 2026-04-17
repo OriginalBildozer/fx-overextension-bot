@@ -474,7 +474,6 @@ async def send_alert(
     emoji_main = "🔥" if direction == "bullish" else "❄️"
     arrow      = "🔼" if direction == "bullish" else "🔽"
     tv_url_https = f"https://fr.tradingview.com/chart/?symbol={tv_symbol}"
-    tv_url_app   = f"tradingview://chart/?symbol={tv_symbol}"
 
     signals_text = "\n".join(f"  ✅ `{s}`" for s in result["signals"])
 
@@ -492,7 +491,7 @@ async def send_alert(
     )
 
     keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton("📈 Ouvrir dans TradingView", url=tv_url_app),
+        InlineKeyboardButton("📈 Ouvrir dans TradingView", url=tv_url_https),
     ]])
 
     await bot.send_photo(
