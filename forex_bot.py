@@ -96,7 +96,7 @@ RSI_OVERSOLD        = 33     # RSI < seuil → excès baissier
 ATR_MULT_IMPULSE    = 2.0    # Impulsion doit dépasser N × ATR
 ATR_MULT_EMA_DIST   = 2.0    # Distance EMA doit dépasser N × ATR
 
-IMPULSE_WINDOW      = 6      # Bougies sur lesquelles mesurer l'impulsion
+IMPULSE_WINDOW      = 3      # Bougies sur lesquelles mesurer l'impulsion
 MAX_RETRACE_RATIO   = 0.20   # Retracement max toléré — condition ET obligatoire
 SWING_LOOKBACK      = 3      # Bougies de chaque côté pour valider un swing point
 SWING_WINDOW        = 168    # Profondeur de recherche des swing points (7j × 24h)
