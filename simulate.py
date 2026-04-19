@@ -175,8 +175,6 @@ def simulate(pair: str, target_dt: datetime):
     ema_bull        = ema_ratio >  ATR_MULT_EMA_DIST
     ema_bear        = ema_ratio < -ATR_MULT_EMA_DIST
     range_trigger   = range_ratio >= 1.5
-    range_direction = "bullish" if float(last["Close"]) >= float(last["Open"]) else "bearish"
-
     ema_rng_trigger = (abs(ema_ratio) >= ATR_MULT_EMA_DIST) and range_trigger
 
     # Calcul du gap (combien il manque pour déclencher)
@@ -184,7 +182,6 @@ def simulate(pair: str, target_dt: datetime):
     def gap_rsi_bear():  return f"manque {rsi - RSI_OVERSOLD:.1f} pts"
     def gap_imp():       return f"manque {ATR_MULT_IMPULSE - abs(imp_ratio):.2f}×ATR"
     def gap_ema():       return f"manque {ATR_MULT_EMA_DIST - abs(ema_ratio):.2f}×ATR"
-    def gap_range():     return f"manque {1.5 - range_ratio:.2f}× (actuel ×{range_ratio:.2f})"
     def gap_ema_rng():
         parts = []
         if abs(ema_ratio) < ATR_MULT_EMA_DIST:
@@ -202,9 +199,7 @@ def simulate(pair: str, target_dt: datetime):
           + (f"  {DIM}{gap_imp()}{RST}" if not (imp_bull or imp_bear) else ""))
     print(f"    ③ EMA dist  > {ATR_MULT_EMA_DIST}×ATR   : {ema_ratio:+.2f}×ATR  {ok(ema_bull or ema_bear)}"
           + (f"  {DIM}{gap_ema()}{RST}" if not (ema_bull or ema_bear) else ""))
-    print(f"    ④ Bougie large ≥ 1.5× moy {CANDLE_RANGE_LOOKBACK} préc. : ×{range_ratio:.2f}  [{range_direction}]  {ok(range_trigger)}"
-          + (f"  {DIM}{gap_range()}{RST}" if not range_trigger else ""))
-    print(f"    ⑤ EMA >{ATR_MULT_EMA_DIST}×ATR ET Range≥1.5×moy : EMA={ema_ratio:+.2f}×  Range=×{range_ratio:.2f}  {ok(ema_rng_trigger)}"
+    print(f"    ④ EMA>{ATR_MULT_EMA_DIST}×ATR ET Range≥1.5×moy : EMA={ema_ratio:+.2f}×  Range=×{range_ratio:.2f}  {ok(ema_rng_trigger)}"
           + (f"  {DIM}{gap_ema_rng()}{RST}" if not ema_rng_trigger else ""))
     line()
 
@@ -217,11 +212,6 @@ def simulate(pair: str, target_dt: datetime):
     if imp_bear:  bearish_signals.append(f"Impulsion {imp_ratio:.2f}×")
     if ema_bull:  bullish_signals.append(f"EMA +{ema_ratio:.2f}×")
     if ema_bear:  bearish_signals.append(f"EMA {ema_ratio:.2f}×")
-    if range_trigger:
-        if range_direction == "bullish":
-            bullish_signals.append(f"Bougie large ×{range_ratio:.2f}")
-        else:
-            bearish_signals.append(f"Bougie large ×{range_ratio:.2f}")
     if ema_rng_trigger:
         if ema_dist_signed > 0:
             bullish_signals.append(f"EMA+Range ({ema_ratio:+.2f}×ATR & ×{range_ratio:.2f} moy)")
