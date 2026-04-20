@@ -10,8 +10,16 @@ import io
 import json
 import logging
 import os
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
+
+TZ_PARIS = ZoneInfo("Europe/Paris")
+
+def _now_paris() -> datetime:
+    """Heure courante en timezone Europe/Paris."""
+    return datetime.now(TZ_PARIS)
 
 import matplotlib
 matplotlib.use("Agg")   # backend non-interactif (headless CI)
@@ -25,12 +33,14 @@ from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 
 load_dotenv()
 
-# ─── Logging ──────────────────────────────────────────────────────────────────
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler()],   # stdout → visible dans GH Actions logs
-)
+# ─── Logging (heure Paris) ────────────────────────────────────────────────────
+class _ParisFormatter(logging.Formatter):
+    def converter(self, timestamp):
+        return datetime.fromtimestamp(timestamp, TZ_PARIS).timetuple()
+
+_handler = logging.StreamHandler()
+_handler.setFormatter(_ParisFormatter("%(asctime)s [%(levelname)s] %(message)s"))
+logging.basicConfig(level=logging.INFO, handlers=[_handler])
 log = logging.getLogger(__name__)
 
 # ─── Credentials (injectés via Secrets GH Actions ou .env local) ─────────────
@@ -478,7 +488,7 @@ async def send_alert(
 
     signals_text = "\n".join(f"  ✅ `{s}`" for s in result["signals"])
 
-    now_str = datetime.utcnow().strftime("%d/%m/%Y %H:%M")
+    now_str = _now_paris().strftime("%d/%m/%Y %H:%M")
 
     caption = (
         f"*New overextension on {pair} {emoji_main}*\n\n"
@@ -511,7 +521,7 @@ async def send_alert(
 
 async def scan_all(bot: Bot) -> None:
     log.info("=" * 60)
-    log.info(f"Scan démarré — {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC")
+    log.info(f"Scan démarré — {_now_paris().strftime('%Y-%m-%d %H:%M:%S')} (Paris)")
     log.info(f"Paires surveillées : {len(FOREX_PAIRS)}")
     log.info("─" * 60)
     log.info("CONDITIONS DE DÉCLENCHEMENT (logique OR + filtre ET) :")
