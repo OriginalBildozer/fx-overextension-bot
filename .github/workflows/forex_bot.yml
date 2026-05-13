@@ -34,14 +34,14 @@ jobs:
       - name: 📦 Install dependencies
         run: pip install -r requirements.txt
 
-      # 4 — Restauration de l'état anti-doublon ────────────────────────────────
-      # On utilise restore-keys pour récupérer le cache du run précédent,
-      # puis on sauvegarde avec la clé du run courant (toujours unique).
+      # 4 — Restauration des états (overextension + patterns) ──────────────────
       - name: ♻️  Restore alert state (anti-doublon)
         id: restore-state
         uses: actions/cache/restore@v4
         with:
-          path: alert_state.json
+          path: |
+            alert_state.json
+            pattern_state.json
           key: forex-alert-state-${{ github.run_id }}
           restore-keys: |
             forex-alert-state-
@@ -61,5 +61,7 @@ jobs:
         if: always()
         uses: actions/cache/save@v4
         with:
-          path: alert_state.json
+          path: |
+            alert_state.json
+            pattern_state.json
           key: forex-alert-state-${{ github.run_id }}

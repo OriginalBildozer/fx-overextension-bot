@@ -116,6 +116,18 @@ CHART_RIGHT_MARGIN  = 12     # Espace vide à droite (12h à venir)
 
 ALERT_STATE_FILE    = Path("alert_state.json")
 
+# ─── Paramètres patterns (Pin Bar / Engulfing) ───────────────────────────────
+PIN_BAR_BODY_MAX_PCT = 0.35   # Corps ≤ 35% du range total
+PIN_BAR_WICK_MIN_PCT = 0.60   # Mèche dominante ≥ 60% du range total
+
+PATTERN_TIMEFRAMES = {
+    "M15": {"interval": "15m", "period": "5d"},
+    "M30": {"interval": "30m", "period": "7d"},
+    "H1":  {"interval": "1h",  "period": "15d"},
+}
+
+PATTERN_STATE_FILE = Path("pattern_state.json")
+
 
 # ─── Indicateurs techniques ───────────────────────────────────────────────────
 
@@ -517,6 +529,117 @@ async def send_alert(
     )
 
 
+# ─── Fetch multi-timeframe ───────────────────────────────────────────────────
+
+def fetch_tf_data(yf_ticker: str, interval: str, period: str) -> pd.DataFrame | None:
+    """Télécharge des données pour un timeframe quelconque."""
+    try:
+        df = yf.download(yf_ticker, period=period, interval=interval,
+                         progress=False, auto_adjust=True)
+        if df.empty or len(df) < 5:
+            return None
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.droplevel(1)
+        return df[["Open", "High", "Low", "Close", "Volume"]].dropna()
+    except Exception as exc:
+        log.error(f"Erreur fetch {yf_ticker} {interval}: {exc}")
+        return None
+
+
+# ─── Détection des patterns ───────────────────────────────────────────────────
+
+def detect_pin_bar(df: pd.DataFrame) -> dict | None:
+    """Détecte une pin bar sur la dernière bougie."""
+    last = df.iloc[-1]
+    o, h, l, c = float(last["Open"]), float(last["High"]), float(last["Low"]), float(last["Close"])
+    total_range = h - l
+    if total_range == 0:
+        return None
+    body        = abs(c - o)
+    upper_wick  = h - max(o, c)
+    lower_wick  = min(o, c) - l
+    if body / total_range > PIN_BAR_BODY_MAX_PCT:
+        return None
+    if lower_wick / total_range >= PIN_BAR_WICK_MIN_PCT:
+        return {"direction": "bullish", "pattern": "Pin Bar",
+                "detail": f"mèche basse {lower_wick/total_range*100:.0f}% du range"}
+    if upper_wick / total_range >= PIN_BAR_WICK_MIN_PCT:
+        return {"direction": "bearish", "pattern": "Pin Bar",
+                "detail": f"mèche haute {upper_wick/total_range*100:.0f}% du range"}
+    return None
+
+
+def detect_engulfing(df: pd.DataFrame) -> dict | None:
+    """Détecte une bougie engulfing sur les 2 dernières bougies."""
+    if len(df) < 2:
+        return None
+    prev, curr = df.iloc[-2], df.iloc[-1]
+    po, pc = float(prev["Open"]), float(prev["Close"])
+    co, cc = float(curr["Open"]), float(curr["Close"])
+    prev_bull = pc > po
+    curr_bull  = cc > co
+    if prev_bull == curr_bull:
+        return None
+    # Le corps courant englobe entièrement le corps précédent
+    if max(co, cc) > max(po, pc) and min(co, cc) < min(po, pc):
+        direction = "bullish" if curr_bull else "bearish"
+        ratio = abs(cc - co) / max(abs(pc - po), 1e-10)
+        return {"direction": direction, "pattern": "Engulfing",
+                "detail": f"corps ×{ratio:.2f} vs bougie préc."}
+    return None
+
+
+# ─── État anti-doublon patterns (basé sur timestamp de bougie) ────────────────
+
+def load_pattern_state() -> dict:
+    if PATTERN_STATE_FILE.exists():
+        try:
+            return json.loads(PATTERN_STATE_FILE.read_text())
+        except Exception:
+            pass
+    return {}
+
+def save_pattern_state(state: dict) -> None:
+    PATTERN_STATE_FILE.write_text(json.dumps(state, indent=2))
+
+def _pattern_already_sent(state: dict, pair: str, tf: str,
+                           pattern: str, candle_ts: str) -> bool:
+    """Évite de renvoyer la même formation sur la même bougie."""
+    return f"{pair}|{tf}|{pattern}|{candle_ts}" in state
+
+def _mark_pattern_sent(state: dict, pair: str, tf: str,
+                        pattern: str, candle_ts: str) -> None:
+    state[f"{pair}|{tf}|{pattern}|{candle_ts}"] = _now_paris().isoformat()
+
+
+# ─── Alerte Telegram pattern ─────────────────────────────────────────────────
+
+async def send_pattern_alert(bot: Bot, pair: str, tf: str,
+                              pattern: dict, tv_symbol: str) -> None:
+    direction  = pattern["direction"]
+    emoji_main = "🔥" if direction == "bullish" else "❄️"
+    arrow      = "🔼" if direction == "bullish" else "🔽"
+    tv_url     = f"https://fr.tradingview.com/chart/?symbol={tv_symbol}"
+    now_str    = _now_paris().strftime("%d/%m/%Y %H:%M")
+
+    caption = (
+        f"*Pattern {pattern['pattern']} — {pair} {emoji_main}*\n\n"
+        f"🕐 `{now_str}`\n"
+        f"⏱ *Timeframe :* `{tf}`\n"
+        f"{arrow} *Direction :* {direction.capitalize()}\n"
+        f"📊 *Détail :* `{pattern['detail']}`"
+    )
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("📈 Ouvrir dans TradingView", url=tv_url),
+    ]])
+    await bot.send_message(
+        chat_id=TELEGRAM_CHANNEL_ID,
+        text=caption,
+        parse_mode="Markdown",
+        reply_markup=keyboard,
+    )
+
+
 # ─── Scan unique (appelé une fois par run GitHub Actions) ────────────────────
 
 async def scan_all(bot: Bot) -> None:
@@ -601,7 +724,50 @@ async def scan_all(bot: Bot) -> None:
         )
 
     log.info("-" * 60)
-    log.info(f"Scan terminé — {alerts_sent} alerte(s) envoyée(s)")
+    log.info(f"Scan terminé — {alerts_sent} alerte(s) overextension envoyée(s)")
+
+    # ── Scan patterns (Pin Bar / Engulfing) sur M15, M30, H1 ────────────────
+    log.info("=" * 60)
+    log.info("SCAN PATTERNS — Pin Bar / Engulfing (M15 · M30 · H1)")
+    log.info("=" * 60)
+
+    pattern_state    = load_pattern_state()
+    patterns_sent    = 0
+
+    for pair, info in FOREX_PAIRS.items():
+        for tf, tf_info in PATTERN_TIMEFRAMES.items():
+            try:
+                df_tf = fetch_tf_data(info["yf"], tf_info["interval"], tf_info["period"])
+                if df_tf is None:
+                    continue
+
+                candle_ts = str(df_tf.index[-1])
+
+                for detector in [detect_pin_bar, detect_engulfing]:
+                    pat = detector(df_tf)
+                    if pat is None:
+                        continue
+
+                    if _pattern_already_sent(pattern_state, pair, tf,
+                                             pat["pattern"], candle_ts):
+                        log.info(f"  {pair:<12} | {tf} {pat['pattern']} déjà envoyé pour cette bougie")
+                        continue
+
+                    log.info(
+                        f"  {pair:<12} | 📊 {tf} {pat['pattern']} "
+                        f"{pat['direction'].upper()} — {pat['detail']}"
+                    )
+                    await send_pattern_alert(bot, pair, tf, pat, info["tv"])
+                    _mark_pattern_sent(pattern_state, pair, tf, pat["pattern"], candle_ts)
+                    save_pattern_state(pattern_state)
+                    patterns_sent += 1
+                    await asyncio.sleep(1.0)
+
+            except Exception as exc:
+                log.error(f"  {pair:<12} | {tf} 💥 erreur pattern : {exc}", exc_info=True)
+
+    log.info("-" * 60)
+    log.info(f"Scan patterns terminé — {patterns_sent} alerte(s) envoyée(s)")
 
 
 # ─── Point d'entrée ───────────────────────────────────────────────────────────
