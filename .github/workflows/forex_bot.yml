@@ -39,9 +39,7 @@ jobs:
         id: restore-state
         uses: actions/cache/restore@v4
         with:
-          path: |
-            alert_state.json
-            pattern_state.json
+          path: alert_state.json
           key: forex-alert-state-${{ github.run_id }}
           restore-keys: |
             forex-alert-state-
@@ -61,7 +59,5 @@ jobs:
         if: always()
         uses: actions/cache/save@v4
         with:
-          path: |
-            alert_state.json
-            pattern_state.json
+          path: alert_state.json
           key: forex-alert-state-${{ github.run_id }}

@@ -126,7 +126,6 @@ PATTERN_TIMEFRAMES = {
     "H1":  {"interval": "1h",  "period": "15d"},
 }
 
-PATTERN_STATE_FILE = Path("pattern_state.json")
 
 
 # ─── Indicateurs techniques ───────────────────────────────────────────────────
@@ -492,6 +491,7 @@ async def send_alert(
     result: dict,
     tv_symbol: str,
     chart_bytes: bytes,
+    patterns: list | None = None,
 ) -> None:
     direction  = result["direction"]
     emoji_main = "🔥" if direction == "bullish" else "❄️"
@@ -511,6 +511,13 @@ async def send_alert(
         f"⚡ *Force du signal :* {result['strength_bar']}\n"
         f"↩️ *Retracement :* `{result['retrace_pct']} %`"
     )
+
+    if patterns:
+        pattern_lines = "\n".join(
+            f"  📈🚀 *{p['pattern'].upper()} DETECTEE* `[{p['tf']}]` !!!"
+            for p in patterns
+        )
+        caption += f"\n\n{pattern_lines}"
 
     keyboard = InlineKeyboardMarkup([[
         InlineKeyboardButton("📈 Ouvrir dans TradingView", url=tv_url_https),
@@ -589,55 +596,21 @@ def detect_engulfing(df: pd.DataFrame) -> dict | None:
     return None
 
 
-# ─── État anti-doublon patterns (basé sur timestamp de bougie) ────────────────
+# ─── Détection patterns sur tous les timeframes ───────────────────────────────
 
-def load_pattern_state() -> dict:
-    if PATTERN_STATE_FILE.exists():
-        try:
-            return json.loads(PATTERN_STATE_FILE.read_text())
-        except Exception:
-            pass
-    return {}
-
-def save_pattern_state(state: dict) -> None:
-    PATTERN_STATE_FILE.write_text(json.dumps(state, indent=2))
-
-def _pattern_already_sent(state: dict, pair: str, tf: str,
-                           pattern: str, candle_ts: str) -> bool:
-    """Évite de renvoyer la même formation sur la même bougie."""
-    return f"{pair}|{tf}|{pattern}|{candle_ts}" in state
-
-def _mark_pattern_sent(state: dict, pair: str, tf: str,
-                        pattern: str, candle_ts: str) -> None:
-    state[f"{pair}|{tf}|{pattern}|{candle_ts}"] = _now_paris().isoformat()
-
-
-# ─── Alerte Telegram pattern ─────────────────────────────────────────────────
-
-async def send_pattern_alert(bot: Bot, pair: str, tf: str,
-                              pattern: dict, tv_symbol: str) -> None:
-    direction  = pattern["direction"]
-    emoji_main = "🔥" if direction == "bullish" else "❄️"
-    arrow      = "🔼" if direction == "bullish" else "🔽"
-    tv_url     = f"https://fr.tradingview.com/chart/?symbol={tv_symbol}"
-    now_str    = _now_paris().strftime("%d/%m/%Y %H:%M")
-
-    caption = (
-        f"*Pattern {pattern['pattern']} — {pair} {emoji_main}*\n\n"
-        f"🕐 `{now_str}`\n"
-        f"⏱ *Timeframe :* `{tf}`\n"
-        f"{arrow} *Direction :* {direction.capitalize()}\n"
-        f"📊 *Détail :* `{pattern['detail']}`"
-    )
-    keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton("📈 Ouvrir dans TradingView", url=tv_url),
-    ]])
-    await bot.send_message(
-        chat_id=TELEGRAM_CHANNEL_ID,
-        text=caption,
-        parse_mode="Markdown",
-        reply_markup=keyboard,
-    )
+def detect_patterns_all_tf(yf_ticker: str) -> list:
+    """Vérifie Pin Bar et Engulfing sur M15, M30, H1.
+    Retourne la liste des patterns trouvés (dédoublonnés par type)."""
+    found = {}   # clé = pattern name → on garde 1 seul par type (le plus petit TF)
+    for tf, tf_info in PATTERN_TIMEFRAMES.items():
+        df = fetch_tf_data(yf_ticker, tf_info["interval"], tf_info["period"])
+        if df is None:
+            continue
+        for detector in [detect_pin_bar, detect_engulfing]:
+            pat = detector(df)
+            if pat and pat["pattern"] not in found:
+                found[pat["pattern"]] = {**pat, "tf": tf}
+    return list(found.values())
 
 
 # ─── Scan unique (appelé une fois par run GitHub Actions) ────────────────────
@@ -704,8 +677,13 @@ async def scan_all(bot: Bot) -> None:
                 log.info(f"  {pair:<12} | 🔒 cooldown actif (signaux identiques) — message non envoyé")
                 continue
 
+            patterns = detect_patterns_all_tf(info["yf"])
+            if patterns:
+                log.info(f"  {pair:<12} | 📊 patterns : " +
+                         ", ".join(f"{p['pattern']} [{p['tf']}]" for p in patterns))
+
             chart_bytes = generate_chart(df, pair, direction)
-            await send_alert(bot, pair, result, info["tv"], chart_bytes)
+            await send_alert(bot, pair, result, info["tv"], chart_bytes, patterns=patterns)
             mark_alerted(state, pair, direction, result["signals"])
             save_alert_state(state)
             alerts_sent += 1
@@ -724,50 +702,7 @@ async def scan_all(bot: Bot) -> None:
         )
 
     log.info("-" * 60)
-    log.info(f"Scan terminé — {alerts_sent} alerte(s) overextension envoyée(s)")
-
-    # ── Scan patterns (Pin Bar / Engulfing) sur M15, M30, H1 ────────────────
-    log.info("=" * 60)
-    log.info("SCAN PATTERNS — Pin Bar / Engulfing (M15 · M30 · H1)")
-    log.info("=" * 60)
-
-    pattern_state    = load_pattern_state()
-    patterns_sent    = 0
-
-    for pair, info in FOREX_PAIRS.items():
-        for tf, tf_info in PATTERN_TIMEFRAMES.items():
-            try:
-                df_tf = fetch_tf_data(info["yf"], tf_info["interval"], tf_info["period"])
-                if df_tf is None:
-                    continue
-
-                candle_ts = str(df_tf.index[-1])
-
-                for detector in [detect_pin_bar, detect_engulfing]:
-                    pat = detector(df_tf)
-                    if pat is None:
-                        continue
-
-                    if _pattern_already_sent(pattern_state, pair, tf,
-                                             pat["pattern"], candle_ts):
-                        log.info(f"  {pair:<12} | {tf} {pat['pattern']} déjà envoyé pour cette bougie")
-                        continue
-
-                    log.info(
-                        f"  {pair:<12} | 📊 {tf} {pat['pattern']} "
-                        f"{pat['direction'].upper()} — {pat['detail']}"
-                    )
-                    await send_pattern_alert(bot, pair, tf, pat, info["tv"])
-                    _mark_pattern_sent(pattern_state, pair, tf, pat["pattern"], candle_ts)
-                    save_pattern_state(pattern_state)
-                    patterns_sent += 1
-                    await asyncio.sleep(1.0)
-
-            except Exception as exc:
-                log.error(f"  {pair:<12} | {tf} 💥 erreur pattern : {exc}", exc_info=True)
-
-    log.info("-" * 60)
-    log.info(f"Scan patterns terminé — {patterns_sent} alerte(s) envoyée(s)")
+    log.info(f"Scan terminé — {alerts_sent} alerte(s) envoyée(s)")
 
 
 # ─── Point d'entrée ───────────────────────────────────────────────────────────
