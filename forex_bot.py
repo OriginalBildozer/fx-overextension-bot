@@ -535,6 +535,34 @@ async def send_alert(
     )
 
 
+async def send_pattern_only_alert(bot: Bot, pair: str, direction: str,
+                                   patterns: list, tv_symbol: str) -> None:
+    """Message léger envoyé quand des patterns sont détectés mais le cooldown overextension est actif."""
+    arrow    = "🔼" if direction == "bullish" else "🔽"
+    now_str  = _now_paris().strftime("%d/%m/%Y %H:%M")
+    tv_url   = f"https://fr.tradingview.com/chart/?symbol={tv_symbol}"
+
+    pattern_lines = "\n".join(
+        f"  📈🚀 *{p['pattern'].upper()} DETECTEE* `[{p['tf']}]` !!!"
+        for p in patterns
+    )
+    caption = (
+        f"*Pattern sur {pair}*\n\n"
+        f"🕐 `{now_str}`\n"
+        f"{arrow} *Direction :* {direction.capitalize()}\n\n"
+        f"{pattern_lines}"
+    )
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("📈 Ouvrir dans TradingView", url=tv_url),
+    ]])
+    await bot.send_message(
+        chat_id=TELEGRAM_CHANNEL_ID,
+        text=caption,
+        parse_mode="Markdown",
+        reply_markup=keyboard,
+    )
+
+
 # ─── Fetch multi-timeframe ───────────────────────────────────────────────────
 
 def fetch_tf_data(yf_ticker: str, interval: str, period: str) -> pd.DataFrame | None:
@@ -681,14 +709,17 @@ async def scan_all(bot: Bot) -> None:
                 f"— signaux : {', '.join(result['signals'])}"
             )
 
-            if is_on_cooldown(state, pair, direction, result["signals"]):
-                log.info(f"  {pair:<12} | 🔒 cooldown actif (signaux identiques) — message non envoyé")
-                continue
-
             patterns = detect_patterns_all_tf(info["yf"], df)
             if patterns:
                 log.info(f"  {pair:<12} | 📊 patterns : " +
                          ", ".join(f"{p['pattern']} [{p['tf']}]" for p in patterns))
+
+            if is_on_cooldown(state, pair, direction, result["signals"]):
+                log.info(f"  {pair:<12} | 🔒 cooldown actif — overextension non envoyée")
+                if patterns:
+                    await send_pattern_only_alert(bot, pair, direction, patterns, info["tv"])
+                    log.info(f"  {pair:<12} | ✅ alerte pattern envoyée (cooldown overextension actif)")
+                continue
 
             chart_bytes = generate_chart(df, pair, direction)
             await send_alert(bot, pair, result, info["tv"], chart_bytes, patterns=patterns)
