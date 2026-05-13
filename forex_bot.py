@@ -120,10 +120,9 @@ ALERT_STATE_FILE    = Path("alert_state.json")
 PIN_BAR_BODY_MAX_PCT = 0.35   # Corps ≤ 35% du range total
 PIN_BAR_WICK_MIN_PCT = 0.60   # Mèche dominante ≥ 60% du range total
 
+# H1 est réutilisé depuis le fetch overextension — seul M15 est fetchés en plus
 PATTERN_TIMEFRAMES = {
     "M15": {"interval": "15m", "period": "5d"},
-    "M30": {"interval": "30m", "period": "7d"},
-    "H1":  {"interval": "1h",  "period": "15d"},
 }
 
 
@@ -598,10 +597,12 @@ def detect_engulfing(df: pd.DataFrame) -> dict | None:
 
 # ─── Détection patterns sur tous les timeframes ───────────────────────────────
 
-def detect_patterns_all_tf(yf_ticker: str) -> list:
-    """Vérifie Pin Bar et Engulfing sur M15, M30, H1.
-    Retourne la liste des patterns trouvés (dédoublonnés par type)."""
-    found = {}   # clé = pattern name → on garde 1 seul par type (le plus petit TF)
+def detect_patterns_all_tf(yf_ticker: str, df_h1: pd.DataFrame) -> list:
+    """Vérifie Pin Bar et Engulfing sur M15 (fetch) + H1 (réutilisé).
+    Retourne la liste des patterns trouvés (1 seul par type, priorité M15)."""
+    found = {}   # clé = pattern name → on garde 1 seul par type (priorité au plus petit TF)
+
+    # M15 — nouveau fetch
     for tf, tf_info in PATTERN_TIMEFRAMES.items():
         df = fetch_tf_data(yf_ticker, tf_info["interval"], tf_info["period"])
         if df is None:
@@ -610,6 +611,13 @@ def detect_patterns_all_tf(yf_ticker: str) -> list:
             pat = detector(df)
             if pat and pat["pattern"] not in found:
                 found[pat["pattern"]] = {**pat, "tf": tf}
+
+    # H1 — réutilisé depuis le fetch overextension (0 requête supplémentaire)
+    for detector in [detect_pin_bar, detect_engulfing]:
+        pat = detector(df_h1)
+        if pat and pat["pattern"] not in found:
+            found[pat["pattern"]] = {**pat, "tf": "H1"}
+
     return list(found.values())
 
 
@@ -677,7 +685,7 @@ async def scan_all(bot: Bot) -> None:
                 log.info(f"  {pair:<12} | 🔒 cooldown actif (signaux identiques) — message non envoyé")
                 continue
 
-            patterns = detect_patterns_all_tf(info["yf"])
+            patterns = detect_patterns_all_tf(info["yf"], df)
             if patterns:
                 log.info(f"  {pair:<12} | 📊 patterns : " +
                          ", ".join(f"{p['pattern']} [{p['tf']}]" for p in patterns))
