@@ -550,6 +550,8 @@ async def send_pattern_only_alert(bot: Bot, pair: str, direction: str,
         f"*Pattern sur {pair}*\n\n"
         f"🕐 `{now_str}`\n"
         f"{arrow} *Direction :* {direction.capitalize()}\n\n"
+        f"✅ Overextension\n"
+        f"➕\n"
         f"{pattern_lines}"
     )
     keyboard = InlineKeyboardMarkup([[
