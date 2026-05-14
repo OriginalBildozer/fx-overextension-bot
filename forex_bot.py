@@ -627,9 +627,14 @@ def detect_engulfing(df: pd.DataFrame) -> dict | None:
 
 # ─── Détection patterns sur tous les timeframes ───────────────────────────────
 
-def detect_patterns_all_tf(yf_ticker: str, df_h1: pd.DataFrame) -> list:
+def detect_patterns_all_tf(yf_ticker: str, df_h1: pd.DataFrame,
+                            overextension_direction: str) -> list:
     """Vérifie Pin Bar et Engulfing sur M15 (fetch) + H1 (réutilisé).
+    Ne retient que les patterns dans le sens OPPOSÉ à l'overextension
+    (signal de retournement potentiel).
+    Ex : overextension bullish → on cherche des patterns bearish.
     Retourne la liste des patterns trouvés (1 seul par type, priorité M15)."""
+    opposite = "bearish" if overextension_direction == "bullish" else "bullish"
     found = {}   # clé = pattern name → on garde 1 seul par type (priorité au plus petit TF)
 
     # M15 — nouveau fetch
@@ -639,13 +644,13 @@ def detect_patterns_all_tf(yf_ticker: str, df_h1: pd.DataFrame) -> list:
             continue
         for detector in [detect_pin_bar, detect_engulfing]:
             pat = detector(df)
-            if pat and pat["pattern"] not in found:
+            if pat and pat["direction"] == opposite and pat["pattern"] not in found:
                 found[pat["pattern"]] = {**pat, "tf": tf}
 
     # H1 — réutilisé depuis le fetch overextension (0 requête supplémentaire)
     for detector in [detect_pin_bar, detect_engulfing]:
         pat = detector(df_h1)
-        if pat and pat["pattern"] not in found:
+        if pat and pat["direction"] == opposite and pat["pattern"] not in found:
             found[pat["pattern"]] = {**pat, "tf": "H1"}
 
     return list(found.values())
@@ -711,7 +716,7 @@ async def scan_all(bot: Bot) -> None:
                 f"— signaux : {', '.join(result['signals'])}"
             )
 
-            patterns = detect_patterns_all_tf(info["yf"], df)
+            patterns = detect_patterns_all_tf(info["yf"], df, direction)
             if patterns:
                 log.info(f"  {pair:<12} | 📊 patterns : " +
                          ", ".join(f"{p['pattern']} [{p['tf']}]" for p in patterns))
