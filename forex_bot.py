@@ -513,7 +513,7 @@ async def send_alert(
 
     if patterns:
         pattern_lines = "\n".join(
-            f"  📈🚀 *{p['pattern'].upper()} DETECTEE* `[{p['tf']}]` !!!"
+            f"📊 {p['pattern'].upper()}  `[{p['tf']}]` !!!"
             for p in patterns
         )
         caption += f"\n\n{pattern_lines}"
@@ -543,7 +543,7 @@ async def send_pattern_only_alert(bot: Bot, pair: str, direction: str,
     tv_url   = f"https://fr.tradingview.com/chart/?symbol={tv_symbol}"
 
     pattern_lines = "\n".join(
-        f"  📈🚀 *{p['pattern'].upper()} DETECTEE* `[{p['tf']}]` !!!"
+        f"📊 {p['pattern'].upper()}  `[{p['tf']}]` !!!"
         for p in patterns
     )
     caption = (
