@@ -483,9 +483,26 @@ def mark_alerted(state: dict, pair: str, direction: str, signals: list) -> None:
     state[_alert_key(pair, direction, signals)] = datetime.utcnow().isoformat()
 
 
+def trading_hours_elapsed(since: datetime) -> float:
+    """Nombre d'heures de trading (lundi–vendredi) écoulées depuis `since`.
+    Les heures de week-end (samedi, dimanche) sont ignorées."""
+    now = datetime.utcnow()
+    if now <= since:
+        return 0.0
+    total  = 0.0
+    cursor = since
+    while cursor < now:
+        end = min(cursor + timedelta(hours=1), now)
+        if cursor.weekday() < 5:   # 0=lun … 4=ven, 5=sam, 6=dim
+            total += (end - cursor).total_seconds() / 3600
+        cursor = end
+    return total
+
+
 def get_last_overextension(state: dict, pair: str) -> tuple | None:
     """Retourne (direction, datetime) de la dernière overextension enregistrée
-    pour cette paire, ou None si aucune dans la fenêtre PATTERN_WINDOW_HOURS."""
+    pour cette paire, ou None si aucune dans la fenêtre PATTERN_WINDOW_HOURS
+    (calculée en heures de trading, week-end exclu)."""
     best_ts  = None
     best_dir = None
     for key, ts_str in state.items():
@@ -501,7 +518,7 @@ def get_last_overextension(state: dict, pair: str) -> tuple | None:
             continue
     if best_ts is None:
         return None
-    if datetime.utcnow() - best_ts > timedelta(hours=PATTERN_WINDOW_HOURS):
+    if trading_hours_elapsed(best_ts) > PATTERN_WINDOW_HOURS:
         return None
     return best_dir, best_ts
 
@@ -794,8 +811,8 @@ async def scan_all(bot: Bot) -> None:
         if last_ovext is None:
             continue
         direction, last_ts = last_ovext
-        age_h = (datetime.utcnow() - last_ts).total_seconds() / 3600
-        log.info(f"  {pair:<12} | fenêtre 24h active ({age_h:.1f}h depuis overextension {direction})")
+        age_h = trading_hours_elapsed(last_ts)
+        log.info(f"  {pair:<12} | fenêtre 24h active ({age_h:.1f}h trading depuis overextension {direction})")
         try:
             patterns = detect_patterns_all_tf(info["yf"], df, direction)
             if patterns:
