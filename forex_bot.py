@@ -112,6 +112,7 @@ CANDLE_RANGE_LOOKBACK = 3    # Nombre de bougies précédentes pour la moyenne r
 # Logique : (RSI OU Impulsion OU EMA-dist OU EMA+Range)  ET  (retracement ≤ 20 %)
 
 COOLDOWN_HOURS      = 4      # Délai avant de re-alerter même paire/direction
+PATTERN_WINDOW_HOURS = 24   # Fenêtre de détection pattern après une overextension
 CHART_RIGHT_MARGIN  = 12     # Espace vide à droite (12h à venir)
 
 ALERT_STATE_FILE    = Path("alert_state.json")
@@ -482,6 +483,29 @@ def mark_alerted(state: dict, pair: str, direction: str, signals: list) -> None:
     state[_alert_key(pair, direction, signals)] = datetime.utcnow().isoformat()
 
 
+def get_last_overextension(state: dict, pair: str) -> tuple | None:
+    """Retourne (direction, datetime) de la dernière overextension enregistrée
+    pour cette paire, ou None si aucune dans la fenêtre PATTERN_WINDOW_HOURS."""
+    best_ts  = None
+    best_dir = None
+    for key, ts_str in state.items():
+        if not key.startswith(f"{pair}|"):
+            continue
+        try:
+            ts        = datetime.fromisoformat(ts_str)
+            direction = key.split("|")[1]
+            if best_ts is None or ts > best_ts:
+                best_ts  = ts
+                best_dir = direction
+        except Exception:
+            continue
+    if best_ts is None:
+        return None
+    if datetime.utcnow() - best_ts > timedelta(hours=PATTERN_WINDOW_HOURS):
+        return None
+    return best_dir, best_ts
+
+
 # ─── Envoi Telegram ───────────────────────────────────────────────────────────
 
 async def send_alert(
@@ -674,10 +698,13 @@ async def scan_all(bot: Bot) -> None:
 
     state       = load_alert_state()
     alerts_sent = 0
+    df_cache    = {}          # H1 réutilisé dans le 2e passage (fenêtre 24h)
+    pairs_pattern_sent = set()  # évite double-envoi pattern
 
     for pair, info in FOREX_PAIRS.items():
         try:
             df = fetch_h1_data(info["yf"])
+            df_cache[pair] = df
             if df is None:
                 log.info(f"  {pair:<12} | ⚠️  données indisponibles")
                 continue
@@ -725,13 +752,15 @@ async def scan_all(bot: Bot) -> None:
                 log.info(f"  {pair:<12} | 🔒 cooldown actif — overextension non envoyée")
                 if patterns:
                     await send_pattern_only_alert(bot, pair, direction, patterns, info["tv"])
-                    log.info(f"  {pair:<12} | ✅ alerte pattern envoyée (cooldown overextension actif)")
+                    pairs_pattern_sent.add(pair)
+                    log.info(f"  {pair:<12} | ✅ alerte pattern envoyée (cooldown actif)")
                 continue
 
             chart_bytes = generate_chart(df, pair, direction)
             await send_alert(bot, pair, result, info["tv"], chart_bytes, patterns=patterns)
             mark_alerted(state, pair, direction, result["signals"])
             save_alert_state(state)
+            pairs_pattern_sent.add(pair)
             alerts_sent += 1
             log.info(f"  {pair:<12} | ✅ message Telegram envoyé")
 
@@ -748,7 +777,38 @@ async def scan_all(bot: Bot) -> None:
         )
 
     log.info("-" * 60)
-    log.info(f"Scan terminé — {alerts_sent} alerte(s) envoyée(s)")
+    log.info(f"Scan overextension terminé — {alerts_sent} alerte(s) envoyée(s)")
+
+    # ── 2e passage : fenêtre 24h — patterns post-overextension ──────────────
+    log.info("─" * 60)
+    log.info(f"Scan patterns fenêtre {PATTERN_WINDOW_HOURS}h")
+    patterns_sent_24h = 0
+
+    for pair, info in FOREX_PAIRS.items():
+        if pair in pairs_pattern_sent:
+            continue   # déjà traité dans le 1er passage
+        df = df_cache.get(pair)
+        if df is None:
+            continue
+        last_ovext = get_last_overextension(state, pair)
+        if last_ovext is None:
+            continue
+        direction, last_ts = last_ovext
+        age_h = (datetime.utcnow() - last_ts).total_seconds() / 3600
+        log.info(f"  {pair:<12} | fenêtre 24h active ({age_h:.1f}h depuis overextension {direction})")
+        try:
+            patterns = detect_patterns_all_tf(info["yf"], df, direction)
+            if patterns:
+                log.info(f"  {pair:<12} | 📊 patterns : " +
+                         ", ".join(f"{p['pattern']} [{p['tf']}]" for p in patterns))
+                await send_pattern_only_alert(bot, pair, direction, patterns, info["tv"])
+                patterns_sent_24h += 1
+                log.info(f"  {pair:<12} | ✅ alerte pattern 24h envoyée")
+        except Exception as exc:
+            log.error(f"  {pair:<12} | 💥 erreur pattern 24h : {exc}", exc_info=True)
+
+    log.info("-" * 60)
+    log.info(f"Scan patterns terminé — {patterns_sent_24h} alerte(s) envoyée(s)")
 
 
 # ─── Point d'entrée ───────────────────────────────────────────────────────────
