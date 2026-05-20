@@ -107,7 +107,6 @@ ATR_MULT_IMPULSE    = 2.0    # Impulsion doit dépasser N × ATR
 ATR_MULT_EMA_DIST   = 2.0    # Distance EMA doit dépasser N × ATR
 
 IMPULSE_WINDOW      = 3      # Bougies sur lesquelles mesurer l'impulsion
-MAX_RETRACE_RATIO   = 0.20   # Retracement max toléré — condition ET obligatoire
 CANDLE_RANGE_LOOKBACK = 3    # Nombre de bougies précédentes pour la moyenne range
 # Logique : (RSI OU Impulsion OU EMA-dist OU EMA+Range)  ET  (retracement ≤ 20 %)
 
@@ -222,7 +221,6 @@ def detect_overextension(df: pd.DataFrame) -> dict:
         "impulse_atr":     0.0,
         "ema_dist_atr":    0.0,
         "candle_range_ratio": 0.0,   # range actuel / moyenne des N précédentes
-        "retrace_pct":     0.0,
     }
 
     if pd.isna(rsi) or pd.isna(atr) or atr == 0:
@@ -291,28 +289,6 @@ def detect_overextension(df: pd.DataFrame) -> dict:
     else:
         direction = "bearish"
         signals   = bearish_signals
-
-    # ── Condition ET — retracement ≤ 20 % ────────────────────────────────
-    # Seuil minimum d'impulsion pour que le calcul ait du sens.
-    # En-dessous, le HH/LL seul a déclenché sans mouvement net → filtre inactif.
-    MIN_IMPULSE_FOR_RETRACE = 0.3   # × ATR
-
-    impulse_abs = abs(signed_impulse)
-    if impulse_abs >= MIN_IMPULSE_FOR_RETRACE * atr:
-        if direction == "bullish":
-            peak    = float(window["High"].max())
-            retrace = (peak - float(price)) / impulse_abs
-        else:
-            trough  = float(window["Low"].min())
-            retrace = (float(price) - trough) / impulse_abs
-    else:
-        retrace = 0.0   # impulsion trop faible → retracement non calculable
-
-    base["retrace_pct"] = round(retrace * 100, 1)
-
-    if retrace > MAX_RETRACE_RATIO:
-        base["reject_reason"] = f"retracement {retrace*100:.1f}% > {MAX_RETRACE_RATIO*100:.0f}%"
-        return base
 
     strength = len(signals)
     base.update({
@@ -548,8 +524,7 @@ async def send_alert(
         f"{arrow} *Direction :* {direction.capitalize()}\n"
         f"💰 *Prix :* `{result['price']}`\n\n"
         f"*Signaux déclenchés :*\n{signals_text}\n\n"
-        f"⚡ *Force du signal :* {result['strength_bar']}\n"
-        f"↩️ *Retracement :* `{result['retrace_pct']} %`"
+        f"⚡ *Force du signal :* {result['strength_bar']}"
     )
 
     if patterns:
@@ -709,7 +684,6 @@ async def scan_all(bot: Bot) -> None:
     log.info(f"  ② Impulsion forte : move net sur {IMPULSE_WINDOW} bougies  >  {ATR_MULT_IMPULSE}× ATR")
     log.info(f"  ③ Distance EMA    : |prix − EMA{EMA_FAST}|  >  {ATR_MULT_EMA_DIST}× ATR")
     log.info(f"  ④ EMA + Range     : (|prix − EMA{EMA_FAST}| > {ATR_MULT_EMA_DIST}×ATR)  ET  (range bougie ≥ 1.5× moy {CANDLE_RANGE_LOOKBACK} préc.)")
-    log.info(f"  [ET] Retracement  : pullback depuis l'extrême  ≤  {int(MAX_RETRACE_RATIO*100)}% de l'impulsion")
     log.info(f"  [COOLDOWN]        : {COOLDOWN_HOURS}h par paire/direction/signaux identiques")
     log.info("=" * 60)
 
@@ -744,8 +718,7 @@ async def scan_all(bot: Bot) -> None:
                 f"Imp={result['impulse_atr']:+.2f}×{imp_ok}  "
                 f"EMA={result['ema_dist_atr']:+.2f}×{ema_ok}  "
                 f"Range=×{result['candle_range_ratio']}  "
-                f"EMA+Rng{ema_rng_ok}  "
-                f"Retrace={result['retrace_pct']}%"
+                f"EMA+Rng{ema_rng_ok}"
             )
 
             # ── Résultat de la détection ───────────────────────────────────

@@ -35,8 +35,7 @@ from forex_bot import (
     RSI_OVERBOUGHT, RSI_OVERSOLD, RSI_PERIOD,
     ATR_PERIOD, EMA_FAST,
     ATR_MULT_IMPULSE, ATR_MULT_EMA_DIST,
-    IMPULSE_WINDOW, MAX_RETRACE_RATIO,
-    CANDLE_RANGE_LOOKBACK,
+    IMPULSE_WINDOW, CANDLE_RANGE_LOOKBACK,
     compute_rsi, compute_atr, compute_ema,
     _strength_stars,
 )
@@ -227,32 +226,7 @@ def simulate(pair: str, target_dt: datetime):
     direction = "bullish" if len(bullish_signals) >= len(bearish_signals) else "bearish"
     signals   = bullish_signals if direction == "bullish" else bearish_signals
 
-    # ── Retracement (filtre ET) ───────────────────────────────────────────
-    MIN_IMPULSE_FOR_RETRACE = 0.3
-    impulse_abs = abs(signed_impulse)
-    if impulse_abs >= MIN_IMPULSE_FOR_RETRACE * atr:
-        if direction == "bullish":
-            peak    = float(window["High"].max())
-            retrace = (peak - price) / impulse_abs
-        else:
-            trough  = float(window["Low"].min())
-            retrace = (price - trough) / impulse_abs
-    else:
-        retrace = 0.0   # impulsion trop faible → filtre retracement inactif
-
-    retrace_ok = retrace <= MAX_RETRACE_RATIO
-
-    print(f"{W}  FILTRE ET{RST}  (obligatoire)")
-    print(f"    Retracement ≤ {int(MAX_RETRACE_RATIO*100)}%  :  {retrace*100:.1f}%  {ok(retrace_ok)}"
-          + (f"  {DIM}dépasse de {(retrace - MAX_RETRACE_RATIO)*100:.1f}%{RST}" if not retrace_ok else ""))
-    line()
-
     # ── Verdict final ─────────────────────────────────────────────────────
-    if not retrace_ok:
-        print(f"{Y}  ⚠️  Conditions OR remplies mais retracement trop élevé → pas d'alerte{RST}")
-        print(f"     Signaux détectés ({direction}) : {', '.join(signals)}")
-        return
-
     strength = len(signals)
     print(f"{G}  🚨 ALERTE DÉCLENCHÉE{RST}")
     print(f"     Direction  : {W}{direction.upper()}{RST}")
