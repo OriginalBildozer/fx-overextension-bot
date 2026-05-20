@@ -509,7 +509,7 @@ async def send_alert(
     arrow      = "🔼" if direction == "bullish" else "🔽"
     tv_url_https = f"https://fr.tradingview.com/chart/?symbol={tv_symbol}"
 
-    signals_text = "\n".join(f"  ✅ `{s}`" for s in result["signals"])
+    signals_text = "\n".join(f"✅ `{s}`" for s in result["signals"])
 
     now_str = _now_paris().strftime("%d/%m/%Y %H:%M")
 
@@ -520,21 +520,21 @@ async def send_alert(
         parse_mode="Markdown",
     )
 
-    # ── Graphique + détails en caption ───────────────────────────────────
+    # ── Graphique + corps en caption (affiché sous le graphique) ─────────
     caption = (
         f"🕐 `{now_str}`\n"
         f"{arrow} *Direction :* {direction.capitalize()}\n"
         f"💰 *Prix :* `{result['price']}`\n\n"
-        f"*Signaux déclenchés :*\n{signals_text}\n\n"
-        f"⚡ *Force du signal :* {result['strength_bar']}"
+        f"📡 *Signaux déclenchés :*\n{signals_text}\n\n"
+        f"⚡ *Force du signal :*\n{result['strength_bar']}"
     )
 
     if patterns:
         pattern_lines = "\n".join(
-            f"📊 {p['pattern'].upper()}  `[{p['tf']}]` !!!"
+            f"📊 {p['pattern'].capitalize()} {p['tf']} !!!"
             for p in patterns
         )
-        caption += f"\n\n{pattern_lines}"
+        caption += f"\n\n🚀 *Pattern détecté :*\n{pattern_lines}"
 
     keyboard = InlineKeyboardMarkup([[
         InlineKeyboardButton("📈 Ouvrir dans TradingView", url=tv_url_https),
