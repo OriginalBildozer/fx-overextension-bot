@@ -518,8 +518,15 @@ async def send_alert(
 
     now_str = _now_paris().strftime("%d/%m/%Y %H:%M")
 
+    # ── Titre au-dessus du graphique ──────────────────────────────────────
+    await bot.send_message(
+        chat_id=TELEGRAM_CHANNEL_ID,
+        text=f"*New overextension on {pair} {emoji_main}*",
+        parse_mode="Markdown",
+    )
+
+    # ── Graphique + détails en caption ───────────────────────────────────
     caption = (
-        f"*New overextension on {pair} {emoji_main}*\n\n"
         f"🕐 `{now_str}`\n"
         f"{arrow} *Direction :* {direction.capitalize()}\n"
         f"💰 *Prix :* `{result['price']}`\n\n"
