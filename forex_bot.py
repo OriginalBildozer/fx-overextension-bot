@@ -111,7 +111,6 @@ CANDLE_RANGE_LOOKBACK = 3    # Nombre de bougies précédentes pour la moyenne r
 # Logique : (RSI OU Impulsion OU EMA-dist OU EMA+Range)  ET  (retracement ≤ 20 %)
 
 COOLDOWN_HOURS      = 4      # Délai avant de re-alerter même paire/direction
-PATTERN_WINDOW_HOURS = 24   # Fenêtre de détection pattern après une overextension
 CHART_RIGHT_MARGIN  = 12     # Espace vide à droite (12h à venir)
 
 ALERT_STATE_FILE    = Path("alert_state.json")
@@ -459,44 +458,6 @@ def mark_alerted(state: dict, pair: str, direction: str, signals: list) -> None:
     state[_alert_key(pair, direction, signals)] = datetime.utcnow().isoformat()
 
 
-def trading_hours_elapsed(since: datetime) -> float:
-    """Nombre d'heures de trading (lundi–vendredi) écoulées depuis `since`.
-    Les heures de week-end (samedi, dimanche) sont ignorées."""
-    now = datetime.utcnow()
-    if now <= since:
-        return 0.0
-    total  = 0.0
-    cursor = since
-    while cursor < now:
-        end = min(cursor + timedelta(hours=1), now)
-        if cursor.weekday() < 5:   # 0=lun … 4=ven, 5=sam, 6=dim
-            total += (end - cursor).total_seconds() / 3600
-        cursor = end
-    return total
-
-
-def get_last_overextension(state: dict, pair: str) -> tuple | None:
-    """Retourne (direction, datetime) de la dernière overextension enregistrée
-    pour cette paire, ou None si aucune dans la fenêtre PATTERN_WINDOW_HOURS
-    (calculée en heures de trading, week-end exclu)."""
-    best_ts  = None
-    best_dir = None
-    for key, ts_str in state.items():
-        if not key.startswith(f"{pair}|"):
-            continue
-        try:
-            ts        = datetime.fromisoformat(ts_str)
-            direction = key.split("|")[1]
-            if best_ts is None or ts > best_ts:
-                best_ts  = ts
-                best_dir = direction
-        except Exception:
-            continue
-    if best_ts is None:
-        return None
-    if trading_hours_elapsed(best_ts) > PATTERN_WINDOW_HOURS:
-        return None
-    return best_dir, best_ts
 
 
 # ─── Envoi Telegram ───────────────────────────────────────────────────────────
@@ -558,34 +519,6 @@ async def send_alert(
     )
 
 
-async def send_pattern_only_alert(bot: Bot, pair: str, direction: str,
-                                   patterns: list, tv_symbol: str) -> None:
-    """Message léger envoyé quand des patterns sont détectés mais le cooldown overextension est actif."""
-    arrow    = "🔼" if direction == "bullish" else "🔽"
-    now_str  = _now_paris().strftime("%d/%m/%Y %H:%M")
-    tv_url   = f"https://fr.tradingview.com/chart/?symbol={tv_symbol}"
-
-    pattern_lines = "\n".join(
-        f"📊 {p['pattern'].upper()}  `[{p['tf']}]` !!!"
-        for p in patterns
-    )
-    caption = (
-        f"*Pattern sur {pair}*\n\n"
-        f"🕐 `{now_str}`\n"
-        f"{arrow} *Direction :* {direction.capitalize()}\n\n"
-        f"✅ Overextension\n"
-        f"➕\n"
-        f"{pattern_lines}"
-    )
-    keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton("📈 Ouvrir dans TradingView", url=tv_url),
-    ]])
-    await bot.send_message(
-        chat_id=TELEGRAM_CHANNEL_ID,
-        text=caption,
-        parse_mode="Markdown",
-        reply_markup=keyboard,
-    )
 
 
 # ─── Fetch multi-timeframe ───────────────────────────────────────────────────
@@ -696,13 +629,10 @@ async def scan_all(bot: Bot) -> None:
 
     state       = load_alert_state()
     alerts_sent = 0
-    df_cache    = {}          # H1 réutilisé dans le 2e passage (fenêtre 24h)
-    pairs_pattern_sent = set()  # évite double-envoi pattern
 
     for pair, info in FOREX_PAIRS.items():
         try:
             df = fetch_h1_data(info["yf"])
-            df_cache[pair] = df
             if df is None:
                 log.info(f"  {pair:<12} | ⚠️  données indisponibles")
                 continue
@@ -746,18 +676,13 @@ async def scan_all(bot: Bot) -> None:
                          ", ".join(f"{p['pattern']} [{p['tf']}]" for p in patterns))
 
             if is_on_cooldown(state, pair, direction, result["signals"]):
-                log.info(f"  {pair:<12} | 🔒 cooldown actif — overextension non envoyée")
-                if patterns:
-                    await send_pattern_only_alert(bot, pair, direction, patterns, info["tv"])
-                    pairs_pattern_sent.add(pair)
-                    log.info(f"  {pair:<12} | ✅ alerte pattern envoyée (cooldown actif)")
+                log.info(f"  {pair:<12} | 🔒 cooldown actif — message non envoyé")
                 continue
 
             chart_bytes = generate_chart(df, pair, direction)
             await send_alert(bot, pair, result, info["tv"], chart_bytes, patterns=patterns)
             mark_alerted(state, pair, direction, result["signals"])
             save_alert_state(state)
-            pairs_pattern_sent.add(pair)
             alerts_sent += 1
             log.info(f"  {pair:<12} | ✅ message Telegram envoyé")
 
@@ -774,38 +699,7 @@ async def scan_all(bot: Bot) -> None:
         )
 
     log.info("-" * 60)
-    log.info(f"Scan overextension terminé — {alerts_sent} alerte(s) envoyée(s)")
-
-    # ── 2e passage : fenêtre 24h — patterns post-overextension ──────────────
-    log.info("─" * 60)
-    log.info(f"Scan patterns fenêtre {PATTERN_WINDOW_HOURS}h")
-    patterns_sent_24h = 0
-
-    for pair, info in FOREX_PAIRS.items():
-        if pair in pairs_pattern_sent:
-            continue   # déjà traité dans le 1er passage
-        df = df_cache.get(pair)
-        if df is None:
-            continue
-        last_ovext = get_last_overextension(state, pair)
-        if last_ovext is None:
-            continue
-        direction, last_ts = last_ovext
-        age_h = trading_hours_elapsed(last_ts)
-        log.info(f"  {pair:<12} | fenêtre 24h active ({age_h:.1f}h trading depuis overextension {direction})")
-        try:
-            patterns = detect_patterns_all_tf(info["yf"], df, direction)
-            if patterns:
-                log.info(f"  {pair:<12} | 📊 patterns : " +
-                         ", ".join(f"{p['pattern']} [{p['tf']}]" for p in patterns))
-                await send_pattern_only_alert(bot, pair, direction, patterns, info["tv"])
-                patterns_sent_24h += 1
-                log.info(f"  {pair:<12} | ✅ alerte pattern 24h envoyée")
-        except Exception as exc:
-            log.error(f"  {pair:<12} | 💥 erreur pattern 24h : {exc}", exc_info=True)
-
-    log.info("-" * 60)
-    log.info(f"Scan patterns terminé — {patterns_sent_24h} alerte(s) envoyée(s)")
+    log.info(f"Scan terminé — {alerts_sent} alerte(s) envoyée(s)")
 
 
 # ─── Point d'entrée ───────────────────────────────────────────────────────────
