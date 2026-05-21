@@ -743,7 +743,7 @@ async def scan_all(bot: Bot) -> None:
                 result_ctx = {
                     "direction":    stored_dir,
                     "price":        result["price"],
-                    "signals":      [f"⏱ Overextension il y a {age_h:.0f}h de trading"],
+                    "signals":      [f"⏱ OVX il y a {age_h:.0f}h"],
                     "strength_bar": "",
                 }
                 chart_bytes = generate_chart(df, pair, stored_dir)
