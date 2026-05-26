@@ -145,14 +145,23 @@ def simulate(pair: str, target_dt: datetime):
     signed_impulse  = price - impulse_start
     ema_dist_signed = price - ema_fast
 
-    # Bougie large — range actuel vs moyenne des N précédentes
-    current_range = float(last["High"] - last["Low"])
-    prev_ranges   = [
+    # Bougie large — range actuel et précédent vs leur moy respective
+    current_range   = float(last["High"] - last["Low"])
+    avg_before_curr = sum(
         float(df.iloc[-i]["High"] - df.iloc[-i]["Low"])
         for i in range(2, 2 + CANDLE_RANGE_LOOKBACK)
-    ]
-    avg_prev_range = sum(prev_ranges) / len(prev_ranges) if prev_ranges else 0
-    range_ratio    = current_range / avg_prev_range if avg_prev_range > 0 else 0.0
+    ) / CANDLE_RANGE_LOOKBACK
+    ratio_curr = current_range / avg_before_curr if avg_before_curr > 0 else 0.0
+
+    prev_candle     = df.iloc[-2]
+    prev_range      = float(prev_candle["High"] - prev_candle["Low"])
+    avg_before_prev = sum(
+        float(df.iloc[-i]["High"] - df.iloc[-i]["Low"])
+        for i in range(3, 3 + CANDLE_RANGE_LOOKBACK)
+    ) / CANDLE_RANGE_LOOKBACK
+    ratio_prev = prev_range / avg_before_prev if avg_before_prev > 0 else 0.0
+
+    range_ratio   = max(ratio_curr, ratio_prev)
 
     print(f"{W}  INDICATEURS{RST}")
     print(f"    Prix           : {B}{price:.5f}{RST}")
@@ -160,47 +169,56 @@ def simulate(pair: str, target_dt: datetime):
     print(f"    RSI ({RSI_PERIOD})        : {rsi:.1f}")
     print(f"    EMA {EMA_FAST}          : {ema_fast:.5f}  (dist brute = {ema_dist_signed:+.5f})")
     print(f"    Impulsion ({IMPULSE_WINDOW}b)  : {signed_impulse:+.5f}  sur {IMPULSE_WINDOW} bougies")
-    print(f"    Range bougie   : {current_range:.6f}  (×{range_ratio:.2f} moy des {CANDLE_RANGE_LOOKBACK} préc.)")
+    print(f"    Range actuel   : {current_range:.6f}  (×{ratio_curr:.2f} moy des {CANDLE_RANGE_LOOKBACK} préc.)")
+    print(f"    Range préc.    : {prev_range:.6f}  (×{ratio_prev:.2f} moy de ses {CANDLE_RANGE_LOOKBACK} préc.)")
     line()
 
     # ── Évaluation des conditions ─────────────────────────────────────────
     imp_ratio  = signed_impulse / atr  if atr else 0
     ema_ratio  = ema_dist_signed / atr if atr else 0
 
-    rsi_bull        = rsi > RSI_OVERBOUGHT
-    rsi_bear        = rsi < RSI_OVERSOLD
-    imp_bull        = imp_ratio >  ATR_MULT_IMPULSE
-    imp_bear        = imp_ratio < -ATR_MULT_IMPULSE
-    ema_bull        = ema_ratio >  ATR_MULT_EMA_DIST
-    ema_bear        = ema_ratio < -ATR_MULT_EMA_DIST
-    range_trigger   = range_ratio >= 1.5
-    ema_rng_trigger = (abs(ema_ratio) >= ATR_MULT_EMA_DIST) and range_trigger
+    rsi_bull      = rsi > RSI_OVERBOUGHT
+    rsi_bear      = rsi < RSI_OVERSOLD
+    imp_bull      = imp_ratio >  ATR_MULT_IMPULSE
+    imp_bear      = imp_ratio < -ATR_MULT_IMPULSE
+    ema_bull      = ema_ratio >  ATR_MULT_EMA_DIST
+    ema_bear      = ema_ratio < -ATR_MULT_EMA_DIST
+    range_trigger = ratio_curr >= 1.5 or ratio_prev >= 1.5
 
     # Calcul du gap (combien il manque pour déclencher)
     def gap_rsi_bull():  return f"manque {RSI_OVERBOUGHT - rsi:.1f} pts"
     def gap_rsi_bear():  return f"manque {rsi - RSI_OVERSOLD:.1f} pts"
     def gap_imp():       return f"manque {ATR_MULT_IMPULSE - abs(imp_ratio):.2f}×ATR"
     def gap_ema():       return f"manque {ATR_MULT_EMA_DIST - abs(ema_ratio):.2f}×ATR"
-    def gap_ema_rng():
+    def gap_range():
         parts = []
-        if abs(ema_ratio) < ATR_MULT_EMA_DIST:
-            parts.append(f"EMA manque {ATR_MULT_EMA_DIST - abs(ema_ratio):.2f}×ATR")
-        if not range_trigger:
-            parts.append(f"Range manque ×{1.5 - range_ratio:.2f}")
+        if ratio_curr < 1.5: parts.append(f"act. manque ×{1.5 - ratio_curr:.2f}")
+        if ratio_prev < 1.5: parts.append(f"préc. manque ×{1.5 - ratio_prev:.2f}")
         return "  ".join(parts)
 
-    print(f"{W}  CONDITIONS OR{RST}  (1 seule suffit)")
-    print(f"    ① RSI > {RSI_OVERBOUGHT} (haussier)    : RSI={rsi:.1f}  {ok(rsi_bull)}"
+    rsi_ok = rsi_bull or rsi_bear
+    cond24_ok = (imp_bull or imp_bear) or (ema_bull or ema_bear) or range_trigger
+
+    print(f"{W}  LOGIQUE : ① ET (② OU ③ OU ④){RST}")
+    print(f"    ① RSI (obligatoire)")
+    print(f"       RSI > {RSI_OVERBOUGHT} (haussier) : RSI={rsi:.1f}  {ok(rsi_bull)}"
           + (f"  {DIM}{gap_rsi_bull()}{RST}" if not rsi_bull else ""))
-    print(f"       RSI < {RSI_OVERSOLD} (baissier)    : RSI={rsi:.1f}  {ok(rsi_bear)}"
+    print(f"       RSI < {RSI_OVERSOLD} (baissier) : RSI={rsi:.1f}  {ok(rsi_bear)}"
           + (f"  {DIM}{gap_rsi_bear()}{RST}" if not rsi_bear else ""))
     print(f"    ② Impulsion > {ATR_MULT_IMPULSE}×ATR   : {imp_ratio:+.2f}×ATR  {ok(imp_bull or imp_bear)}"
           + (f"  {DIM}{gap_imp()}{RST}" if not (imp_bull or imp_bear) else ""))
     print(f"    ③ EMA dist  > {ATR_MULT_EMA_DIST}×ATR   : {ema_ratio:+.2f}×ATR  {ok(ema_bull or ema_bear)}"
           + (f"  {DIM}{gap_ema()}{RST}" if not (ema_bull or ema_bear) else ""))
-    print(f"    ④ EMA>{ATR_MULT_EMA_DIST}×ATR ET Range≥1.5×moy : EMA={ema_ratio:+.2f}×  Range=×{range_ratio:.2f}  {ok(ema_rng_trigger)}"
-          + (f"  {DIM}{gap_ema_rng()}{RST}" if not ema_rng_trigger else ""))
+    print(f"    ④ Range (act.×{ratio_curr:.2f} | préc.×{ratio_prev:.2f}) ≥ 1.5×moy  {ok(range_trigger)}"
+          + (f"  {DIM}{gap_range()}{RST}" if not range_trigger else ""))
     line()
+
+    if not rsi_ok:
+        print(f"{R}  ✗ RSI neutre → pas d'alerte{RST}")
+        return
+    if not cond24_ok:
+        print(f"{R}  ✗ RSI ok mais aucune condition 2-4 → pas d'alerte{RST}")
+        return
 
     # ── Résumé direction ──────────────────────────────────────────────────
     bullish_signals = []
@@ -211,17 +229,11 @@ def simulate(pair: str, target_dt: datetime):
     if imp_bear:  bearish_signals.append(f"Impulsion {imp_ratio:.2f}×")
     if ema_bull:  bullish_signals.append(f"EMA +{ema_ratio:.2f}×")
     if ema_bear:  bearish_signals.append(f"EMA {ema_ratio:.2f}×")
-    if ema_rng_trigger:
-        if ema_dist_signed > 0:
-            bullish_signals.append(f"EMA+Range ({ema_ratio:+.2f}×ATR & ×{range_ratio:.2f} moy)")
+    if range_trigger:
+        if ema_dist_signed >= 0:
+            bullish_signals.append(f"Range ×{range_ratio:.2f} moy")
         else:
-            bearish_signals.append(f"EMA+Range ({ema_ratio:+.2f}×ATR & ×{range_ratio:.2f} moy)")
-
-    any_or = bool(bullish_signals or bearish_signals)
-
-    if not any_or:
-        print(f"{R}  ✗ Aucune condition OR remplie → pas d'alerte{RST}")
-        return
+            bearish_signals.append(f"Range ×{range_ratio:.2f} moy")
 
     direction = "bullish" if len(bullish_signals) >= len(bearish_signals) else "bearish"
     signals   = bullish_signals if direction == "bullish" else bearish_signals

@@ -103,8 +103,8 @@ EMA_SLOW            = 50
 RSI_OVERBOUGHT      = 67     # RSI > seuil → excès haussier
 RSI_OVERSOLD        = 33     # RSI < seuil → excès baissier
 
-ATR_MULT_IMPULSE    = 2.0    # Impulsion doit dépasser N × ATR
-ATR_MULT_EMA_DIST   = 2.0    # Distance EMA doit dépasser N × ATR
+ATR_MULT_IMPULSE    = 1.5    # Impulsion doit dépasser N × ATR
+ATR_MULT_EMA_DIST   = 1.5    # Distance EMA doit dépasser N × ATR
 
 IMPULSE_WINDOW      = 3      # Bougies sur lesquelles mesurer l'impulsion
 CANDLE_RANGE_LOOKBACK = 3    # Nombre de bougies précédentes pour la moyenne range
@@ -181,7 +181,7 @@ def fetch_h1_data(yf_ticker: str) -> pd.DataFrame | None:
 
 # ─── Détection de l'overextension ────────────────────────────────────────────
 
-def _strength_stars(n: int, total: int = 4) -> str:
+def _strength_stars(n: int, total: int = 5) -> str:
     """Étoiles colorées selon le nombre de conditions déclenchées.
     1 → rouge  |  2-3 → orange  |  4 → vert
     Ex : 🟠 ★★★☆
@@ -234,14 +234,16 @@ def detect_overextension(df: pd.DataFrame) -> dict:
     base["impulse_atr"]  = round(float(signed_impulse / atr), 2)
     base["ema_dist_atr"] = round(float(ema_dist_signed / atr), 2)
 
-    # ── Critères OR ───────────────────────────────────────────────────────
-    bullish_signals, bearish_signals = [], []
+    # ── Condition 1 — RSI (obligatoire) ──────────────────────────────────
+    rsi_bull = rsi > RSI_OVERBOUGHT
+    rsi_bear = rsi < RSI_OVERSOLD
 
-    # 1 — RSI
-    if rsi > RSI_OVERBOUGHT:
-        bullish_signals.append(f"RSI {rsi:.1f} > {RSI_OVERBOUGHT}")
-    elif rsi < RSI_OVERSOLD:
-        bearish_signals.append(f"RSI {rsi:.1f} < {RSI_OVERSOLD}")
+    if not rsi_bull and not rsi_bear:
+        base["reject_reason"] = "RSI neutre"
+        return base
+
+    # ── Conditions 2-4 (au moins une requise) ────────────────────────────
+    bullish_signals, bearish_signals = [], []
 
     # 2 — Impulsion
     if signed_impulse > ATR_MULT_IMPULSE * atr:
@@ -255,32 +257,51 @@ def detect_overextension(df: pd.DataFrame) -> dict:
     elif ema_dist_signed < -ATR_MULT_EMA_DIST * atr:
         bearish_signals.append(f"EMA dist {ema_dist_signed/atr:.1f}×ATR")
 
-    # Calcul du range — utilisé par la condition 4 (EMA + Range)
-    current_range  = float(last["High"] - last["Low"])
-    prev_ranges    = [
+    # Calcul du range — condition 4
+    # Bougie actuelle
+    current_range   = float(last["High"] - last["Low"])
+    avg_before_curr = sum(
         float(df.iloc[-i]["High"] - df.iloc[-i]["Low"])
         for i in range(2, 2 + CANDLE_RANGE_LOOKBACK)
-    ]
-    avg_prev_range = sum(prev_ranges) / len(prev_ranges) if prev_ranges else 0
-    range_ratio    = (current_range / avg_prev_range) if avg_prev_range > 0 else 0.0
+    ) / CANDLE_RANGE_LOOKBACK
+    ratio_curr = (current_range / avg_before_curr) if avg_before_curr > 0 else 0.0
+
+    # Bougie précédente
+    prev_candle      = df.iloc[-2]
+    prev_range       = float(prev_candle["High"] - prev_candle["Low"])
+    avg_before_prev  = sum(
+        float(df.iloc[-i]["High"] - df.iloc[-i]["Low"])
+        for i in range(3, 3 + CANDLE_RANGE_LOOKBACK)
+    ) / CANDLE_RANGE_LOOKBACK
+    ratio_prev = (prev_range / avg_before_prev) if avg_before_prev > 0 else 0.0
+
+    range_ratio = max(ratio_curr, ratio_prev)
     base["candle_range_ratio"] = round(range_ratio, 2)
 
-    # 4 — (EMA dist > 2×ATR) ET (bougie ≥ 1.5× moy range) simultanément
-    ema_cond   = abs(ema_dist_signed) > ATR_MULT_EMA_DIST * atr
-    range_cond = range_ratio >= 1.5
-    if ema_cond and range_cond:
-        if ema_dist_signed > 0:
-            bullish_signals.append(
-                f"EMA+Range ({ema_dist_signed/atr:+.2f}×ATR & ×{range_ratio:.2f} moy)"
-            )
+    range_cond = ratio_curr >= 1.5 or ratio_prev >= 1.5
+
+    # 4 — Range : bougie actuelle OU précédente ≥ 1.5× moy de ses 3 précédentes
+    if range_cond:
+        triggered = []
+        if ratio_curr >= 1.5:
+            triggered.append(f"act.×{ratio_curr:.2f}")
+        if ratio_prev >= 1.5:
+            triggered.append(f"préc.×{ratio_prev:.2f}")
+        label = f"Range ({', '.join(triggered)}) moy"
+        if ema_dist_signed >= 0:
+            bullish_signals.append(label)
         else:
-            bearish_signals.append(
-                f"EMA+Range ({ema_dist_signed/atr:+.2f}×ATR & ×{range_ratio:.2f} moy)"
-            )
+            bearish_signals.append(label)
 
     if not bullish_signals and not bearish_signals:
-        base["reject_reason"] = "aucun signal OR"
+        base["reject_reason"] = "aucun signal 2-4"
         return base
+
+    # Ajouter le RSI dans les signaux (toujours présent à ce stade)
+    if rsi_bull:
+        bullish_signals.insert(0, f"RSI {rsi:.1f} > {RSI_OVERBOUGHT}")
+    else:
+        bearish_signals.insert(0, f"RSI {rsi:.1f} < {RSI_OVERSOLD}")
 
     # Direction
     if len(bullish_signals) >= len(bearish_signals):
@@ -651,7 +672,7 @@ async def scan_all(bot: Bot) -> None:
     log.info(f"  ① RSI extrême     : RSI > {RSI_OVERBOUGHT} (haussier)  ou  RSI < {RSI_OVERSOLD} (baissier)  [période {RSI_PERIOD}]")
     log.info(f"  ② Impulsion forte : move net sur {IMPULSE_WINDOW} bougies  >  {ATR_MULT_IMPULSE}× ATR")
     log.info(f"  ③ Distance EMA    : |prix − EMA{EMA_FAST}|  >  {ATR_MULT_EMA_DIST}× ATR")
-    log.info(f"  ④ EMA + Range     : (|prix − EMA{EMA_FAST}| > {ATR_MULT_EMA_DIST}×ATR)  ET  (range bougie ≥ 1.5× moy {CANDLE_RANGE_LOOKBACK} préc.)")
+    log.info(f"  ④ Range seul      : range bougie actuelle ≥ 1.5× moy des {CANDLE_RANGE_LOOKBACK} précédentes")
     log.info(f"  [COOLDOWN]        : {COOLDOWN_HOURS}h par paire/direction/signaux identiques")
     log.info("=" * 60)
 
