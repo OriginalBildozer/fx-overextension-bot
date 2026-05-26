@@ -266,7 +266,7 @@ def detect_overextension(df: pd.DataFrame) -> dict:
 
     range_ratio = max(ratio_curr, ratio_prev)
     base["candle_range_ratio"] = round(range_ratio, 2)
-    range_cond = ratio_curr >= 1.5 or ratio_prev >= 1.5
+    range_cond = ratio_curr >= 2.0 or ratio_prev >= 2.0
 
     # ── Logique : (① ET (② OU ③))  OU  ④ ────────────────────────────────
     rsi_plus_other = (rsi_bull or rsi_bear) and (imp_bull or imp_bear or ema_bull or ema_bear)
@@ -288,8 +288,8 @@ def detect_overextension(df: pd.DataFrame) -> dict:
 
     if range_cond:
         triggered = []
-        if ratio_curr >= 1.5: triggered.append(f"act.×{ratio_curr:.2f}")
-        if ratio_prev >= 1.5: triggered.append(f"préc.×{ratio_prev:.2f}")
+        if ratio_curr >= 2.0: triggered.append(f"act.×{ratio_curr:.2f}")
+        if ratio_prev >= 2.0: triggered.append(f"préc.×{ratio_prev:.2f}")
         label = f"Range ({', '.join(triggered)}) moy"
         if ema_dist_signed >= 0:
             bullish_signals.append(label)
@@ -665,7 +665,7 @@ async def scan_all(bot: Bot) -> None:
     log.info(f"  ① RSI extrême     : RSI > {RSI_OVERBOUGHT} (haussier)  ou  RSI < {RSI_OVERSOLD} (baissier)  [période {RSI_PERIOD}]")
     log.info(f"  ② Impulsion forte : move net sur {IMPULSE_WINDOW} bougies  >  {ATR_MULT_IMPULSE}× ATR")
     log.info(f"  ③ Distance EMA    : |prix − EMA{EMA_FAST}|  >  {ATR_MULT_EMA_DIST}× ATR")
-    log.info(f"  ④ Range seul      : range bougie actuelle ≥ 1.5× moy des {CANDLE_RANGE_LOOKBACK} précédentes")
+    log.info(f"  ④ Range seul      : range bougie actuelle ≥ 2.0× moy des {CANDLE_RANGE_LOOKBACK} précédentes")
     log.info(f"  [COOLDOWN]        : {COOLDOWN_HOURS}h par paire/direction/signaux identiques")
     log.info("=" * 60)
 
@@ -689,7 +689,7 @@ async def scan_all(bot: Bot) -> None:
             imp_ok     = ok if abs(result["impulse_atr"]) >= ATR_MULT_IMPULSE   else nok
             ema_ok     = ok if abs(result["ema_dist_atr"]) >= ATR_MULT_EMA_DIST else nok
             ema_rng_ok = ok if (abs(result["ema_dist_atr"]) >= ATR_MULT_EMA_DIST
-                                and result["candle_range_ratio"] >= 1.5)        else nok
+                                and result["candle_range_ratio"] >= 2.0)        else nok
             log.info(
                 f"  {pair:<12} | "
                 f"Prix={result['price']}  ATR={result['atr']}  "

@@ -183,7 +183,7 @@ def simulate(pair: str, target_dt: datetime):
     imp_bear      = imp_ratio < -ATR_MULT_IMPULSE
     ema_bull      = ema_ratio >  ATR_MULT_EMA_DIST
     ema_bear      = ema_ratio < -ATR_MULT_EMA_DIST
-    range_trigger = ratio_curr >= 1.5 or ratio_prev >= 1.5
+    range_trigger = ratio_curr >= 2.0 or ratio_prev >= 2.0
 
     # Calcul du gap (combien il manque pour déclencher)
     def gap_rsi_bull():  return f"manque {RSI_OVERBOUGHT - rsi:.1f} pts"
@@ -192,8 +192,8 @@ def simulate(pair: str, target_dt: datetime):
     def gap_ema():       return f"manque {ATR_MULT_EMA_DIST - abs(ema_ratio):.2f}×ATR"
     def gap_range():
         parts = []
-        if ratio_curr < 1.5: parts.append(f"act. manque ×{1.5 - ratio_curr:.2f}")
-        if ratio_prev < 1.5: parts.append(f"préc. manque ×{1.5 - ratio_prev:.2f}")
+        if ratio_curr < 2.0: parts.append(f"act. manque ×{2.0 - ratio_curr:.2f}")
+        if ratio_prev < 2.0: parts.append(f"préc. manque ×{2.0 - ratio_prev:.2f}")
         return "  ".join(parts)
 
     rsi_plus_other = (rsi_bull or rsi_bear) and (imp_bull or imp_bear or ema_bull or ema_bear)
@@ -207,7 +207,7 @@ def simulate(pair: str, target_dt: datetime):
           + (f"  {DIM}{gap_imp()}{RST}" if not (imp_bull or imp_bear) else ""))
     print(f"    ③ EMA dist  > {ATR_MULT_EMA_DIST}×ATR   : {ema_ratio:+.2f}×ATR  {ok(ema_bull or ema_bear)}"
           + (f"  {DIM}{gap_ema()}{RST}" if not (ema_bull or ema_bear) else ""))
-    print(f"    ④ Range (act.×{ratio_curr:.2f} | préc.×{ratio_prev:.2f}) ≥ 1.5×moy  {ok(range_trigger)}"
+    print(f"    ④ Range (act.×{ratio_curr:.2f} | préc.×{ratio_prev:.2f}) ≥ 2.0×moy  {ok(range_trigger)}"
           + (f"  {DIM}{gap_range()}{RST}" if not range_trigger else ""))
     line()
 
