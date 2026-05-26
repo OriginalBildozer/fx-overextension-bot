@@ -234,31 +234,21 @@ def detect_overextension(df: pd.DataFrame) -> dict:
     base["impulse_atr"]  = round(float(signed_impulse / atr), 2)
     base["ema_dist_atr"] = round(float(ema_dist_signed / atr), 2)
 
-    # ── Condition 1 — RSI (obligatoire) ──────────────────────────────────
+    # ── Évaluation de toutes les conditions ──────────────────────────────
     rsi_bull = rsi > RSI_OVERBOUGHT
     rsi_bear = rsi < RSI_OVERSOLD
 
-    if not rsi_bull and not rsi_bear:
-        base["reject_reason"] = "RSI neutre"
-        return base
-
-    # ── Conditions 2-4 (au moins une requise) ────────────────────────────
     bullish_signals, bearish_signals = [], []
 
     # 2 — Impulsion
-    if signed_impulse > ATR_MULT_IMPULSE * atr:
-        bullish_signals.append(f"Impulsion +{signed_impulse/atr:.1f}×ATR")
-    elif signed_impulse < -ATR_MULT_IMPULSE * atr:
-        bearish_signals.append(f"Impulsion {signed_impulse/atr:.1f}×ATR")
+    imp_bull = signed_impulse > ATR_MULT_IMPULSE * atr
+    imp_bear = signed_impulse < -ATR_MULT_IMPULSE * atr
 
     # 3 — Distance EMA20
-    if ema_dist_signed > ATR_MULT_EMA_DIST * atr:
-        bullish_signals.append(f"EMA dist +{ema_dist_signed/atr:.1f}×ATR")
-    elif ema_dist_signed < -ATR_MULT_EMA_DIST * atr:
-        bearish_signals.append(f"EMA dist {ema_dist_signed/atr:.1f}×ATR")
+    ema_bull = ema_dist_signed > ATR_MULT_EMA_DIST * atr
+    ema_bear = ema_dist_signed < -ATR_MULT_EMA_DIST * atr
 
     # Calcul du range — condition 4
-    # Bougie actuelle
     current_range   = float(last["High"] - last["Low"])
     avg_before_curr = sum(
         float(df.iloc[-i]["High"] - df.iloc[-i]["Low"])
@@ -266,7 +256,6 @@ def detect_overextension(df: pd.DataFrame) -> dict:
     ) / CANDLE_RANGE_LOOKBACK
     ratio_curr = (current_range / avg_before_curr) if avg_before_curr > 0 else 0.0
 
-    # Bougie précédente
     prev_candle      = df.iloc[-2]
     prev_range       = float(prev_candle["High"] - prev_candle["Low"])
     avg_before_prev  = sum(
@@ -277,31 +266,35 @@ def detect_overextension(df: pd.DataFrame) -> dict:
 
     range_ratio = max(ratio_curr, ratio_prev)
     base["candle_range_ratio"] = round(range_ratio, 2)
-
     range_cond = ratio_curr >= 1.5 or ratio_prev >= 1.5
 
-    # 4 — Range : bougie actuelle OU précédente ≥ 1.5× moy de ses 3 précédentes
+    # ── Logique : (① ET (② OU ③))  OU  ④ ────────────────────────────────
+    rsi_plus_other = (rsi_bull or rsi_bear) and (imp_bull or imp_bear or ema_bull or ema_bear)
+
+    if not rsi_plus_other and not range_cond:
+        base["reject_reason"] = "conditions non remplies"
+        return base
+
+    # Construire les listes de signaux
+    if rsi_plus_other:
+        if rsi_bull:
+            bullish_signals.append(f"RSI {rsi:.1f} > {RSI_OVERBOUGHT}")
+        else:
+            bearish_signals.append(f"RSI {rsi:.1f} < {RSI_OVERSOLD}")
+        if imp_bull:  bullish_signals.append(f"Impulsion +{signed_impulse/atr:.1f}×ATR")
+        if imp_bear:  bearish_signals.append(f"Impulsion {signed_impulse/atr:.1f}×ATR")
+        if ema_bull:  bullish_signals.append(f"EMA dist +{ema_dist_signed/atr:.1f}×ATR")
+        if ema_bear:  bearish_signals.append(f"EMA dist {ema_dist_signed/atr:.1f}×ATR")
+
     if range_cond:
         triggered = []
-        if ratio_curr >= 1.5:
-            triggered.append(f"act.×{ratio_curr:.2f}")
-        if ratio_prev >= 1.5:
-            triggered.append(f"préc.×{ratio_prev:.2f}")
+        if ratio_curr >= 1.5: triggered.append(f"act.×{ratio_curr:.2f}")
+        if ratio_prev >= 1.5: triggered.append(f"préc.×{ratio_prev:.2f}")
         label = f"Range ({', '.join(triggered)}) moy"
         if ema_dist_signed >= 0:
             bullish_signals.append(label)
         else:
             bearish_signals.append(label)
-
-    if not bullish_signals and not bearish_signals:
-        base["reject_reason"] = "aucun signal 2-4"
-        return base
-
-    # Ajouter le RSI dans les signaux (toujours présent à ce stade)
-    if rsi_bull:
-        bullish_signals.insert(0, f"RSI {rsi:.1f} > {RSI_OVERBOUGHT}")
-    else:
-        bearish_signals.insert(0, f"RSI {rsi:.1f} < {RSI_OVERSOLD}")
 
     # Direction
     if len(bullish_signals) >= len(bearish_signals):

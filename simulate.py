@@ -196,12 +196,10 @@ def simulate(pair: str, target_dt: datetime):
         if ratio_prev < 1.5: parts.append(f"préc. manque ×{1.5 - ratio_prev:.2f}")
         return "  ".join(parts)
 
-    rsi_ok = rsi_bull or rsi_bear
-    cond24_ok = (imp_bull or imp_bear) or (ema_bull or ema_bear) or range_trigger
+    rsi_plus_other = (rsi_bull or rsi_bear) and (imp_bull or imp_bear or ema_bull or ema_bear)
 
-    print(f"{W}  LOGIQUE : ① ET (② OU ③ OU ④){RST}")
-    print(f"    ① RSI (obligatoire)")
-    print(f"       RSI > {RSI_OVERBOUGHT} (haussier) : RSI={rsi:.1f}  {ok(rsi_bull)}"
+    print(f"{W}  LOGIQUE : (① ET (② OU ③))  OU  ④{RST}")
+    print(f"    ① RSI > {RSI_OVERBOUGHT} (haussier) : RSI={rsi:.1f}  {ok(rsi_bull)}"
           + (f"  {DIM}{gap_rsi_bull()}{RST}" if not rsi_bull else ""))
     print(f"       RSI < {RSI_OVERSOLD} (baissier) : RSI={rsi:.1f}  {ok(rsi_bear)}"
           + (f"  {DIM}{gap_rsi_bear()}{RST}" if not rsi_bear else ""))
@@ -213,22 +211,20 @@ def simulate(pair: str, target_dt: datetime):
           + (f"  {DIM}{gap_range()}{RST}" if not range_trigger else ""))
     line()
 
-    if not rsi_ok:
-        print(f"{R}  ✗ RSI neutre → pas d'alerte{RST}")
-        return
-    if not cond24_ok:
-        print(f"{R}  ✗ RSI ok mais aucune condition 2-4 → pas d'alerte{RST}")
+    if not rsi_plus_other and not range_trigger:
+        print(f"{R}  ✗ Conditions non remplies → pas d'alerte{RST}")
         return
 
     # ── Résumé direction ──────────────────────────────────────────────────
     bullish_signals = []
     bearish_signals = []
-    if rsi_bull:  bullish_signals.append(f"RSI {rsi:.1f}")
-    if rsi_bear:  bearish_signals.append(f"RSI {rsi:.1f}")
-    if imp_bull:  bullish_signals.append(f"Impulsion +{imp_ratio:.2f}×")
-    if imp_bear:  bearish_signals.append(f"Impulsion {imp_ratio:.2f}×")
-    if ema_bull:  bullish_signals.append(f"EMA +{ema_ratio:.2f}×")
-    if ema_bear:  bearish_signals.append(f"EMA {ema_ratio:.2f}×")
+    if rsi_plus_other:
+        if rsi_bull:  bullish_signals.append(f"RSI {rsi:.1f}")
+        if rsi_bear:  bearish_signals.append(f"RSI {rsi:.1f}")
+        if imp_bull:  bullish_signals.append(f"Impulsion +{imp_ratio:.2f}×")
+        if imp_bear:  bearish_signals.append(f"Impulsion {imp_ratio:.2f}×")
+        if ema_bull:  bullish_signals.append(f"EMA +{ema_ratio:.2f}×")
+        if ema_bear:  bearish_signals.append(f"EMA {ema_ratio:.2f}×")
     if range_trigger:
         if ema_dist_signed >= 0:
             bullish_signals.append(f"Range ×{range_ratio:.2f} moy")
