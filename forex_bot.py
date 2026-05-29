@@ -52,46 +52,43 @@ TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID", "")
 # tv : symbole URL encodé pour le lien TradingView
 FOREX_PAIRS: dict[str, dict] = {
 
+    # ── Indices US ─────────────────────────────────────────────────────────
+    "US30":     {"yf": "YM=F",        "tv": "OANDA%3AUS30USD"},
+    "NAS100":   {"yf": "NQ=F",        "tv": "OANDA%3ANAS100USD"},
+
     # ── Or ─────────────────────────────────────────────────────────────────
-    "XAU/USD":  {"yf": "GC=F",       "tv": "OANDA%3AXAUUSD"},
+    "XAU/USD":  {"yf": "GC=F",        "tv": "OANDA%3AXAUUSD"},
 
     # ── Majeurs ────────────────────────────────────────────────────────────
-    "EUR/USD":  {"yf": "EURUSD=X",   "tv": "FX%3AEURUSD"},
-    "AUD/USD":  {"yf": "AUDUSD=X",   "tv": "FX%3AAUDUSD"},
-    "NZD/USD":  {"yf": "NZDUSD=X",   "tv": "FX%3ANZDUSD"},
-    "USD/CAD":  {"yf": "USDCAD=X",   "tv": "FX%3AUSDCAD"},
-    "USD/CHF":  {"yf": "USDCHF=X",   "tv": "FX%3AUSDCHF"},
-    "USD/JPY":  {"yf": "USDJPY=X",   "tv": "FX%3AUSDJPY"},
-    "GBP/USD":  {"yf": "GBPUSD=X",   "tv": "FX%3AGBPUSD"},
+    "EUR/USD":  {"yf": "EURUSD=X",    "tv": "FX%3AEURUSD"},
+    "AUD/USD":  {"yf": "AUDUSD=X",    "tv": "FX%3AAUDUSD"},
+    "USD/CAD":  {"yf": "USDCAD=X",    "tv": "FX%3AUSDCAD"},
+    "USD/CHF":  {"yf": "USDCHF=X",    "tv": "FX%3AUSDCHF"},
+    "USD/JPY":  {"yf": "USDJPY=X",    "tv": "FX%3AUSDJPY"},
+    "GBP/USD":  {"yf": "GBPUSD=X",    "tv": "FX%3AGBPUSD"},
 
     # ── Croisées EUR ───────────────────────────────────────────────────────
-    "EUR/GBP":  {"yf": "EURGBP=X",   "tv": "FX%3AEURGBP"},
-    "EUR/AUD":  {"yf": "EURAUD=X",   "tv": "FX%3AEURAUD"},
-    "EUR/CAD":  {"yf": "EURCAD=X",   "tv": "FX%3AEURCAD"},
-    "EUR/JPY":  {"yf": "EURJPY=X",   "tv": "FX%3AEURJPY"},
-    "EUR/CHF":  {"yf": "EURCHF=X",   "tv": "FX%3AEURCHF"},
-    "EUR/NZD":  {"yf": "EURNZD=X",   "tv": "FX%3AEURNZD"},
+    "EUR/GBP":  {"yf": "EURGBP=X",    "tv": "FX%3AEURGBP"},
+    "EUR/AUD":  {"yf": "EURAUD=X",    "tv": "FX%3AEURAUD"},
+    "EUR/CAD":  {"yf": "EURCAD=X",    "tv": "FX%3AEURCAD"},
+    "EUR/JPY":  {"yf": "EURJPY=X",    "tv": "FX%3AEURJPY"},
+    "EUR/CHF":  {"yf": "EURCHF=X",    "tv": "FX%3AEURCHF"},
 
     # ── Croisées GBP ───────────────────────────────────────────────────────
-    "GBP/JPY":  {"yf": "GBPJPY=X",   "tv": "FX%3AGBPJPY"},
-    "GBP/AUD":  {"yf": "GBPAUD=X",   "tv": "FX%3AGBPAUD"},
-    "GBP/CAD":  {"yf": "GBPCAD=X",   "tv": "FX%3AGBPCAD"},
-    "GBP/CHF":  {"yf": "GBPCHF=X",   "tv": "FX%3AGBPCHF"},
-    "GBP/NZD":  {"yf": "GBPNZD=X",   "tv": "FX%3AGBPNZD"},
+    "GBP/JPY":  {"yf": "GBPJPY=X",    "tv": "FX%3AGBPJPY"},
+    "GBP/AUD":  {"yf": "GBPAUD=X",    "tv": "FX%3AGBPAUD"},
+    "GBP/CAD":  {"yf": "GBPCAD=X",    "tv": "FX%3AGBPCAD"},
+    "GBP/CHF":  {"yf": "GBPCHF=X",    "tv": "FX%3AGBPCHF"},
 
     # ── Croisées AUD ───────────────────────────────────────────────────────
-    "AUD/CAD":  {"yf": "AUDCAD=X",   "tv": "FX%3AAUDCAD"},
-    "AUD/JPY":  {"yf": "AUDJPY=X",   "tv": "FX%3AAUDJPY"},
-    "AUD/CHF":  {"yf": "AUDCHF=X",   "tv": "FX%3AAUDCHF"},
-    "AUD/NZD":  {"yf": "AUDNZD=X",   "tv": "FX%3AAUDNZD"},
+    "AUD/CAD":  {"yf": "AUDCAD=X",    "tv": "FX%3AAUDCAD"},
+    "AUD/JPY":  {"yf": "AUDJPY=X",    "tv": "FX%3AAUDJPY"},
+    "AUD/CHF":  {"yf": "AUDCHF=X",    "tv": "FX%3AAUDCHF"},
 
     # ── Autres croisées ────────────────────────────────────────────────────
-    "CAD/JPY":  {"yf": "CADJPY=X",   "tv": "FX%3ACADJPY"},
-    "CAD/CHF":  {"yf": "CADCHF=X",   "tv": "FX%3ACADCHF"},
-    "CHF/JPY":  {"yf": "CHFJPY=X",   "tv": "FX%3ACHFJPY"},
-    "NZD/JPY":  {"yf": "NZDJPY=X",   "tv": "FX%3ANZDJPY"},
-    "NZD/CHF":  {"yf": "NZDCHF=X",   "tv": "FX%3ANZDCHF"},
-    "NZD/CAD":  {"yf": "NZDCAD=X",   "tv": "FX%3ANZDCAD"},
+    "CAD/JPY":  {"yf": "CADJPY=X",    "tv": "FX%3ACADJPY"},
+    "CAD/CHF":  {"yf": "CADCHF=X",    "tv": "FX%3ACADCHF"},
+    "CHF/JPY":  {"yf": "CHFJPY=X",    "tv": "FX%3ACHFJPY"},
 }
 
 # ─── Paramètres de détection ──────────────────────────────────────────────────
