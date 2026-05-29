@@ -578,12 +578,21 @@ async def scan_all(bot: Bot) -> None:
         except Exception as exc:
             log.error(f"  {pair:<12} | 💥 erreur inattendue : {exc}", exc_info=True)
 
-    # Séparateur unique de fin de salve
+    # ── Séparateur de fin de salve épinglé ───────────────────────────────
     if total_sent > 0:
-        await bot.send_message(
+        msg = await bot.send_message(
             chat_id=TELEGRAM_CHANNEL_ID,
             text="‼️" * 15,
         )
+        try:
+            await bot.pin_chat_message(
+                chat_id=TELEGRAM_CHANNEL_ID,
+                message_id=msg.message_id,
+                disable_notification=True,
+            )
+            log.info("📌 Séparateur épinglé")
+        except Exception as e:
+            log.warning(f"Impossible d'épingler le message : {e}")
 
     log.info("-" * 60)
     log.info(f"Scan terminé — {total_sent} message(s) envoyé(s)")
