@@ -112,18 +112,8 @@ CANDLE_RANGE_LOOKBACK = 3    # Nombre de bougies précédentes pour la moyenne r
 
 COOLDOWN_HOURS      = 4      # Délai avant de re-alerter même paire/direction
 CHART_RIGHT_MARGIN  = 12     # Espace vide à droite (12h à venir)
-PATTERN_WINDOW_HOURS = 24    # Fenêtre (heures de trading) pour détecter un pattern post-overextension
 
 ALERT_STATE_FILE    = Path("alert_state.json")
-
-# ─── Paramètres patterns (Pin Bar / Engulfing) ───────────────────────────────
-PIN_BAR_BODY_MAX_PCT = 0.35   # Corps ≤ 35% du range total
-PIN_BAR_WICK_MIN_PCT = 0.60   # Mèche dominante ≥ 60% du range total
-
-# H1 est réutilisé depuis le fetch overextension — seul M15 est fetchés en plus
-PATTERN_TIMEFRAMES = {
-    "M15": {"interval": "15m", "period": "5d"},
-}
 
 
 
@@ -181,7 +171,7 @@ def fetch_h1_data(yf_ticker: str) -> pd.DataFrame | None:
 
 # ─── Détection de l'overextension ────────────────────────────────────────────
 
-def _strength_stars(n: int, total: int = 5) -> str:
+def _strength_stars(n: int, total: int = 4) -> str:
     """Étoiles colorées selon le nombre de conditions déclenchées.
     1 → rouge  |  2-3 → orange  |  4 → vert
     Ex : 🟠 ★★★☆
@@ -473,40 +463,6 @@ def mark_alerted(state: dict, pair: str, direction: str, signals: list) -> None:
     state[_alert_key(pair, direction, signals)] = datetime.utcnow().isoformat()
 
 
-def trading_hours_elapsed(since: datetime) -> float:
-    """Heures de trading (lun–ven) écoulées depuis `since` (week-end exclu)."""
-    now = datetime.utcnow()
-    if now <= since:
-        return 0.0
-    total, cursor = 0.0, since
-    while cursor < now:
-        end = min(cursor + timedelta(hours=1), now)
-        if cursor.weekday() < 5:
-            total += (end - cursor).total_seconds() / 3600
-        cursor = end
-    return total
-
-
-def get_last_overextension(state: dict, pair: str) -> tuple | None:
-    """Retourne (direction, datetime) de la dernière overextension pour cette paire
-    si elle est dans la fenêtre PATTERN_WINDOW_HOURS (heures trading), sinon None."""
-    best_ts, best_dir = None, None
-    for key, ts_str in state.items():
-        if not key.startswith(f"{pair}|"):
-            continue
-        try:
-            ts = datetime.fromisoformat(ts_str)
-            direction = key.split("|")[1]
-            if best_ts is None or ts > best_ts:
-                best_ts, best_dir = ts, direction
-        except Exception:
-            continue
-    if best_ts is None:
-        return None
-    if trading_hours_elapsed(best_ts) > PATTERN_WINDOW_HOURS:
-        return None
-    return best_dir, best_ts
-
 
 # ─── Envoi Telegram ───────────────────────────────────────────────────────────
 
@@ -516,7 +472,6 @@ async def send_alert(
     result: dict,
     tv_symbol: str,
     chart_bytes: bytes,
-    patterns: list | None = None,
 ) -> None:
     direction  = result["direction"]
     emoji_main = "🔥" if direction == "bullish" else "❄️"
@@ -524,10 +479,8 @@ async def send_alert(
     tv_url_https = f"https://fr.tradingview.com/chart/?symbol={tv_symbol}"
 
     signals_text = "\n".join(f"✅ `{s}`" for s in result["signals"])
-
     now_str = _now_paris().strftime("%d/%m/%Y %H:%M")
 
-    # ── Graphique + titre + corps en caption (message unique) ────────────
     caption = (
         f"*New overextension on {pair} {emoji_main}*\n\n"
         f"🕐 `{now_str}`\n"
@@ -536,13 +489,6 @@ async def send_alert(
         f"📡 *Signaux déclenchés :*\n{signals_text}\n\n"
         f"⚡ *Force du signal :*\n{result['strength_bar']}"
     )
-
-    if patterns:
-        pattern_lines = "\n".join(
-            f"📊 {p['pattern'].capitalize()} {p['tf']} !!!"
-            for p in patterns
-        )
-        caption += f"\n\n🚀 *Pattern détecté :*\n{pattern_lines}"
 
     keyboard = InlineKeyboardMarkup([[
         InlineKeyboardButton("📈 Ouvrir dans TradingView", url=tv_url_https),
@@ -562,96 +508,6 @@ async def send_alert(
 
 
 
-
-# ─── Fetch multi-timeframe ───────────────────────────────────────────────────
-
-def fetch_tf_data(yf_ticker: str, interval: str, period: str) -> pd.DataFrame | None:
-    """Télécharge des données pour un timeframe quelconque."""
-    try:
-        df = yf.download(yf_ticker, period=period, interval=interval,
-                         progress=False, auto_adjust=True)
-        if df.empty or len(df) < 5:
-            return None
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.droplevel(1)
-        return df[["Open", "High", "Low", "Close", "Volume"]].dropna()
-    except Exception as exc:
-        log.error(f"Erreur fetch {yf_ticker} {interval}: {exc}")
-        return None
-
-
-# ─── Détection des patterns ───────────────────────────────────────────────────
-
-def detect_pin_bar(df: pd.DataFrame) -> dict | None:
-    """Détecte une pin bar sur la dernière bougie."""
-    last = df.iloc[-1]
-    o, h, l, c = float(last["Open"]), float(last["High"]), float(last["Low"]), float(last["Close"])
-    total_range = h - l
-    if total_range == 0:
-        return None
-    body        = abs(c - o)
-    upper_wick  = h - max(o, c)
-    lower_wick  = min(o, c) - l
-    if body / total_range > PIN_BAR_BODY_MAX_PCT:
-        return None
-    if lower_wick / total_range >= PIN_BAR_WICK_MIN_PCT:
-        return {"direction": "bullish", "pattern": "Pin Bar",
-                "detail": f"mèche basse {lower_wick/total_range*100:.0f}% du range"}
-    if upper_wick / total_range >= PIN_BAR_WICK_MIN_PCT:
-        return {"direction": "bearish", "pattern": "Pin Bar",
-                "detail": f"mèche haute {upper_wick/total_range*100:.0f}% du range"}
-    return None
-
-
-def detect_engulfing(df: pd.DataFrame) -> dict | None:
-    """Détecte une bougie engulfing sur les 2 dernières bougies."""
-    if len(df) < 2:
-        return None
-    prev, curr = df.iloc[-2], df.iloc[-1]
-    po, pc = float(prev["Open"]), float(prev["Close"])
-    co, cc = float(curr["Open"]), float(curr["Close"])
-    prev_bull = pc > po
-    curr_bull  = cc > co
-    if prev_bull == curr_bull:
-        return None
-    # Le corps courant englobe entièrement le corps précédent
-    if max(co, cc) > max(po, pc) and min(co, cc) < min(po, pc):
-        direction = "bullish" if curr_bull else "bearish"
-        ratio = abs(cc - co) / max(abs(pc - po), 1e-10)
-        return {"direction": direction, "pattern": "Engulfing",
-                "detail": f"corps ×{ratio:.2f} vs bougie préc."}
-    return None
-
-
-# ─── Détection patterns sur tous les timeframes ───────────────────────────────
-
-def detect_patterns_all_tf(yf_ticker: str, df_h1: pd.DataFrame,
-                            overextension_direction: str) -> list:
-    """Vérifie Pin Bar et Engulfing sur M15 (fetch) + H1 (réutilisé).
-    Ne retient que les patterns dans le sens OPPOSÉ à l'overextension
-    (signal de retournement potentiel).
-    Ex : overextension bullish → on cherche des patterns bearish.
-    Retourne la liste des patterns trouvés (1 seul par type, priorité M15)."""
-    opposite = "bearish" if overextension_direction == "bullish" else "bullish"
-    found = {}   # clé = pattern name → on garde 1 seul par type (priorité au plus petit TF)
-
-    # M15 — nouveau fetch
-    for tf, tf_info in PATTERN_TIMEFRAMES.items():
-        df = fetch_tf_data(yf_ticker, tf_info["interval"], tf_info["period"])
-        if df is None:
-            continue
-        for detector in [detect_pin_bar, detect_engulfing]:
-            pat = detector(df)
-            if pat and pat["direction"] == opposite and pat["pattern"] not in found:
-                found[pat["pattern"]] = {**pat, "tf": tf}
-
-    # H1 — réutilisé depuis le fetch overextension (0 requête supplémentaire)
-    for detector in [detect_pin_bar, detect_engulfing]:
-        pat = detector(df_h1)
-        if pat and pat["direction"] == opposite and pat["pattern"] not in found:
-            found[pat["pattern"]] = {**pat, "tf": "H1"}
-
-    return list(found.values())
 
 
 # ─── Scan unique (appelé une fois par run GitHub Actions) ────────────────────
@@ -685,22 +541,19 @@ async def scan_all(bot: Bot) -> None:
             # ── Log détaillé des indicateurs ──────────────────────────────
             ok  = "✅"
             nok = "❌"
-            rsi_ok     = ok if abs(result["rsi"] - 50) >= (50 - RSI_OVERSOLD)    else nok
-            imp_ok     = ok if abs(result["impulse_atr"]) >= ATR_MULT_IMPULSE   else nok
-            ema_ok     = ok if abs(result["ema_dist_atr"]) >= ATR_MULT_EMA_DIST else nok
-            ema_rng_ok = ok if (abs(result["ema_dist_atr"]) >= ATR_MULT_EMA_DIST
-                                and result["candle_range_ratio"] >= 2.0)        else nok
+            rsi_ok = ok if abs(result["rsi"] - 50) >= (50 - RSI_OVERSOLD) else nok
+            imp_ok = ok if abs(result["impulse_atr"]) >= ATR_MULT_IMPULSE  else nok
+            ema_ok = ok if abs(result["ema_dist_atr"]) >= ATR_MULT_EMA_DIST else nok
+            rng_ok = ok if result["candle_range_ratio"] >= 2.0              else nok
             log.info(
                 f"  {pair:<12} | "
                 f"Prix={result['price']}  ATR={result['atr']}  "
                 f"RSI={result['rsi']}{rsi_ok}  "
                 f"Imp={result['impulse_atr']:+.2f}×{imp_ok}  "
                 f"EMA={result['ema_dist_atr']:+.2f}×{ema_ok}  "
-                f"Range=×{result['candle_range_ratio']}  "
-                f"EMA+Rng{ema_rng_ok}"
+                f"Range=×{result['candle_range_ratio']}{rng_ok}"
             )
 
-            # ══ CAS A : overextension détectée maintenant ═════════════════
             if result["detected"]:
                 direction = result["direction"]
                 log.info(
@@ -709,62 +562,18 @@ async def scan_all(bot: Bot) -> None:
                     f"— signaux : {', '.join(result['signals'])}"
                 )
                 on_cd = is_on_cooldown(state, pair, direction, result["signals"])
-
-                # Fetch M15 + detect patterns (utile dans les deux branches)
-                patterns = detect_patterns_all_tf(info["yf"], df, direction)
-                if patterns:
-                    log.info(f"  {pair:<12} | 📊 patterns : " +
-                             ", ".join(f"{p['pattern']} [{p['tf']}]" for p in patterns))
-
                 if not on_cd:
-                    # Cooldown expiré ou première alerte → envoyer overextension (+ patterns)
                     chart_bytes = generate_chart(df, pair, direction)
-                    await send_alert(bot, pair, result, info["tv"], chart_bytes, patterns=patterns)
+                    await send_alert(bot, pair, result, info["tv"], chart_bytes)
                     mark_alerted(state, pair, direction, result["signals"])
                     save_alert_state(state)
                     total_sent += 1
-                    log.info(f"  {pair:<12} | ✅ alerte overextension envoyée")
+                    log.info(f"  {pair:<12} | ✅ alerte envoyée")
                     await asyncio.sleep(1.5)
-
-                elif patterns:
-                    # Cooldown actif MAIS nouveau pattern → envoyer overextension + pattern
-                    chart_bytes = generate_chart(df, pair, direction)
-                    await send_alert(bot, pair, result, info["tv"], chart_bytes, patterns=patterns)
-                    total_sent += 1
-                    log.info(f"  {pair:<12} | ✅ alerte pattern (cooldown actif) envoyée")
-                    await asyncio.sleep(1.5)
-
                 else:
-                    log.info(f"  {pair:<12} | 🔒 cooldown actif, pas de pattern — rien envoyé")
-
-            # ══ CAS B : pas d'overextension maintenant ════════════════════
+                    log.info(f"  {pair:<12} | 🔒 cooldown actif — rien envoyé")
             else:
                 log.info(f"  {pair:<12} | ⛔ non déclenché — {result['reject_reason']}")
-                last_ovext = get_last_overextension(state, pair)
-                if last_ovext is None:
-                    continue   # aucune overextension récente
-
-                stored_dir, last_ts = last_ovext
-                age_h = trading_hours_elapsed(last_ts)
-
-                # Fetch M15 + detect patterns uniquement si fenêtre 24h active
-                patterns = detect_patterns_all_tf(info["yf"], df, stored_dir)
-                if not patterns:
-                    log.info(f"  {pair:<12} | ⏱ {age_h:.1f}h depuis overextension — pas de pattern")
-                    continue
-
-                log.info(f"  {pair:<12} | ⏱ {age_h:.1f}h depuis overextension {stored_dir} + pattern → alerte")
-                result_ctx = {
-                    "direction":    stored_dir,
-                    "price":        result["price"],
-                    "signals":      [f"⏱ OVX il y a {age_h:.0f}h"],
-                    "strength_bar": "",
-                }
-                chart_bytes = generate_chart(df, pair, stored_dir)
-                await send_alert(bot, pair, result_ctx, info["tv"], chart_bytes, patterns=patterns)
-                total_sent += 1
-                log.info(f"  {pair:<12} | ✅ alerte pattern post-overextension envoyée")
-                await asyncio.sleep(1.5)
 
         except Exception as exc:
             log.error(f"  {pair:<12} | 💥 erreur inattendue : {exc}", exc_info=True)
