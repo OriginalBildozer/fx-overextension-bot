@@ -59,8 +59,9 @@ FOREX_PAIRS: dict[str, dict] = {
     "US30":     {"yf": "YM=F",        "tv": "OANDA%3AUS30USD"},
     "NAS100":   {"yf": "NQ=F",        "tv": "OANDA%3ANAS100USD"},
 
-    # ── Or ─────────────────────────────────────────────────────────────────
+    # ── Matières premières ─────────────────────────────────────────────────
     "XAU/USD":  {"yf": "GC=F",        "tv": "OANDA%3AXAUUSD"},
+    "WTI/USD":  {"yf": "CL=F",        "tv": "NYMEX%3ACL1%21"},
 
     # ── Majeurs ────────────────────────────────────────────────────────────
     "EUR/USD":  {"yf": "EURUSD=X",    "tv": "FX%3AEURUSD"},
