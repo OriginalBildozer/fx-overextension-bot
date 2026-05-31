@@ -52,6 +52,9 @@ TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID", "")
 # tv : symbole URL encodé pour le lien TradingView
 FOREX_PAIRS: dict[str, dict] = {
 
+    # ── Crypto ─────────────────────────────────────────────────────────────
+    "BTC/USD":  {"yf": "BTC-USD",     "tv": "BITSTAMP%3ABTCUSD"},
+
     # ── Indices US ─────────────────────────────────────────────────────────
     "US30":     {"yf": "YM=F",        "tv": "OANDA%3AUS30USD"},
     "NAS100":   {"yf": "NQ=F",        "tv": "OANDA%3ANAS100USD"},
