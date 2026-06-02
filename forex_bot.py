@@ -582,6 +582,18 @@ async def scan_all(bot: Bot) -> None:
 
     # ── Séparateur de fin de salve épinglé ───────────────────────────────
     if total_sent > 0:
+        # Désépingler l'ancien séparateur s'il existe
+        try:
+            chat = await bot.get_chat(chat_id=TELEGRAM_CHANNEL_ID)
+            if chat.pinned_message:
+                await bot.unpin_chat_message(
+                    chat_id=TELEGRAM_CHANNEL_ID,
+                    message_id=chat.pinned_message.message_id,
+                )
+                log.info("📌 Ancien séparateur désépinglé")
+        except Exception as e:
+            log.warning(f"Impossible de désépingler l'ancien message : {e}")
+
         msg = await bot.send_message(
             chat_id=TELEGRAM_CHANNEL_ID,
             text="‼️" * 15,
