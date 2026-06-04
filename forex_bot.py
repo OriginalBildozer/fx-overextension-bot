@@ -90,6 +90,15 @@ FOREX_PAIRS: dict[str, dict] = {
     "AUD/JPY":  {"yf": "AUDJPY=X",    "tv": "FX%3AAUDJPY"},
     "AUD/CHF":  {"yf": "AUDCHF=X",    "tv": "FX%3AAUDCHF"},
 
+    # ── Croisées NZD ───────────────────────────────────────────────────────
+    "NZD/USD":  {"yf": "NZDUSD=X",   "tv": "FX%3ANZDUSD"},
+    "EUR/NZD":  {"yf": "EURNZD=X",   "tv": "FX%3AEURNZD"},
+    "GBP/NZD":  {"yf": "GBPNZD=X",   "tv": "FX%3AGBPNZD"},
+    "AUD/NZD":  {"yf": "AUDNZD=X",   "tv": "FX%3AAUDNZD"},
+    "NZD/JPY":  {"yf": "NZDJPY=X",   "tv": "FX%3ANZDJPY"},
+    "NZD/CHF":  {"yf": "NZDCHF=X",   "tv": "FX%3ANZDCHF"},
+    "NZD/CAD":  {"yf": "NZDCAD=X",   "tv": "FX%3ANZDCAD"},
+
     # ── Autres croisées ────────────────────────────────────────────────────
     "CAD/JPY":  {"yf": "CADJPY=X",    "tv": "FX%3ACADJPY"},
     "CAD/CHF":  {"yf": "CADCHF=X",    "tv": "FX%3ACADCHF"},
