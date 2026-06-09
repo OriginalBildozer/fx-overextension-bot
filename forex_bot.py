@@ -27,6 +27,7 @@ import matplotlib.pyplot as plt
 import mplfinance as mpf
 import numpy as np
 import pandas as pd
+import requests
 import yfinance as yf
 from dotenv import load_dotenv   # no-op si .env absent (OK en CI)
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
@@ -152,6 +153,18 @@ def compute_ema(series: pd.Series, period: int) -> pd.Series:
     return series.ewm(span=period, adjust=False).mean()
 
 
+# ─── Session HTTP avec headers navigateur (contourne l'anti-bot Yahoo) ────────
+_YF_SESSION = requests.Session()
+_YF_SESSION.headers.update({
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.5",
+})
+
 # ─── Récupération des données ─────────────────────────────────────────────────
 
 def fetch_h1_data(yf_ticker: str) -> pd.DataFrame | None:
@@ -163,6 +176,7 @@ def fetch_h1_data(yf_ticker: str) -> pd.DataFrame | None:
             interval="1h",
             progress=False,
             auto_adjust=True,
+            session=_YF_SESSION,
         )
         if df.empty or len(df) < 60:
             log.warning(f"Données insuffisantes pour {yf_ticker} ({len(df)} bougies)")
