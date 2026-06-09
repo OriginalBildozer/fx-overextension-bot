@@ -66,11 +66,10 @@ def fetch_until(yf_ticker: str, target_dt: datetime) -> pd.DataFrame | None:
         df = yf.download(
             yf_ticker,
             start=start.strftime("%Y-%m-%d"),
-            end=end.strftime("%Y-%m-%d %H:%M:%S"),
+            end=(end + timedelta(days=1)).strftime("%Y-%m-%d"),  # yfinance 1.x : date seule
             interval="1h",
             progress=False,
             auto_adjust=True,
-            session=_YF_SESSION,
         )
         if df.empty:
             return None
