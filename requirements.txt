@@ -1,5 +1,4 @@
-yfinance>=1.4.1
-curl_cffi>=0.15
+twelvedata[pandas]
 pandas>=2.0.0
 numpy>=1.26.0
 mplfinance>=0.12.10b0

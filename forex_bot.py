@@ -27,8 +27,7 @@ import matplotlib.pyplot as plt
 import mplfinance as mpf
 import numpy as np
 import pandas as pd
-import requests
-import yfinance as yf
+from twelvedata import TDClient
 from dotenv import load_dotenv   # no-op si .env absent (OK en CI)
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -45,65 +44,66 @@ logging.basicConfig(level=logging.INFO, handlers=[_handler])
 log = logging.getLogger(__name__)
 
 # ─── Credentials (injectés via Secrets GH Actions ou .env local) ─────────────
-TELEGRAM_BOT_TOKEN  = os.getenv("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID", "")
+TELEGRAM_BOT_TOKEN    = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHANNEL_ID   = os.getenv("TELEGRAM_CHANNEL_ID", "")
+TWELVE_DATA_API_KEY   = os.getenv("TWELVE_DATA_API_KEY", "")
 
 # ─── Univers des paires ───────────────────────────────────────────────────────
-# yf : ticker yfinance (source gratuite)
+# td : symbole Twelve Data
 # tv : symbole URL encodé pour le lien TradingView
 FOREX_PAIRS: dict[str, dict] = {
 
     # ── Crypto ─────────────────────────────────────────────────────────────
-    "BTC/USD":  {"yf": "BTC-USD",     "tv": "BITSTAMP%3ABTCUSD"},
+    "BTC/USD":  {"td": "BTC/USD",     "tv": "BITSTAMP%3ABTCUSD"},
 
     # ── Indices US ─────────────────────────────────────────────────────────
-    "US30":     {"yf": "YM=F",        "tv": "OANDA%3AUS30USD"},
-    "NAS100":   {"yf": "NQ=F",        "tv": "OANDA%3ANAS100USD"},
-    "SPX500":   {"yf": "ES=F",        "tv": "OANDA%3ASPX500USD"},
+    "US30":     {"td": "DJI",         "tv": "OANDA%3AUS30USD"},
+    "NAS100":   {"td": "NDX",         "tv": "OANDA%3ANAS100USD"},
+    "SPX500":   {"td": "SPX",         "tv": "OANDA%3ASPX500USD"},
 
     # ── Matières premières ─────────────────────────────────────────────────
-    "XAU/USD":  {"yf": "GC=F",        "tv": "OANDA%3AXAUUSD"},
-    "WTI/USD":  {"yf": "CL=F",        "tv": "NYMEX%3ACL1%21"},
+    "XAU/USD":  {"td": "XAU/USD",     "tv": "OANDA%3AXAUUSD"},
+    "WTI/USD":  {"td": "WTI/USD",     "tv": "NYMEX%3ACL1%21"},
 
     # ── Majeurs ────────────────────────────────────────────────────────────
-    "EUR/USD":  {"yf": "EURUSD=X",    "tv": "FX%3AEURUSD"},
-    "AUD/USD":  {"yf": "AUDUSD=X",    "tv": "FX%3AAUDUSD"},
-    "USD/CAD":  {"yf": "USDCAD=X",    "tv": "FX%3AUSDCAD"},
-    "USD/CHF":  {"yf": "USDCHF=X",    "tv": "FX%3AUSDCHF"},
-    "USD/JPY":  {"yf": "USDJPY=X",    "tv": "FX%3AUSDJPY"},
-    "GBP/USD":  {"yf": "GBPUSD=X",    "tv": "FX%3AGBPUSD"},
+    "EUR/USD":  {"td": "EUR/USD",     "tv": "FX%3AEURUSD"},
+    "AUD/USD":  {"td": "AUD/USD",     "tv": "FX%3AAUDUSD"},
+    "USD/CAD":  {"td": "USD/CAD",     "tv": "FX%3AUSDCAD"},
+    "USD/CHF":  {"td": "USD/CHF",     "tv": "FX%3AUSDCHF"},
+    "USD/JPY":  {"td": "USD/JPY",     "tv": "FX%3AUSDJPY"},
+    "GBP/USD":  {"td": "GBP/USD",     "tv": "FX%3AGBPUSD"},
 
     # ── Croisées EUR ───────────────────────────────────────────────────────
-    "EUR/GBP":  {"yf": "EURGBP=X",    "tv": "FX%3AEURGBP"},
-    "EUR/AUD":  {"yf": "EURAUD=X",    "tv": "FX%3AEURAUD"},
-    "EUR/CAD":  {"yf": "EURCAD=X",    "tv": "FX%3AEURCAD"},
-    "EUR/JPY":  {"yf": "EURJPY=X",    "tv": "FX%3AEURJPY"},
-    "EUR/CHF":  {"yf": "EURCHF=X",    "tv": "FX%3AEURCHF"},
+    "EUR/GBP":  {"td": "EUR/GBP",     "tv": "FX%3AEURGBP"},
+    "EUR/AUD":  {"td": "EUR/AUD",     "tv": "FX%3AEURAUD"},
+    "EUR/CAD":  {"td": "EUR/CAD",     "tv": "FX%3AEURCAD"},
+    "EUR/JPY":  {"td": "EUR/JPY",     "tv": "FX%3AEURJPY"},
+    "EUR/CHF":  {"td": "EUR/CHF",     "tv": "FX%3AEURCHF"},
 
     # ── Croisées GBP ───────────────────────────────────────────────────────
-    "GBP/JPY":  {"yf": "GBPJPY=X",    "tv": "FX%3AGBPJPY"},
-    "GBP/AUD":  {"yf": "GBPAUD=X",    "tv": "FX%3AGBPAUD"},
-    "GBP/CAD":  {"yf": "GBPCAD=X",    "tv": "FX%3AGBPCAD"},
-    "GBP/CHF":  {"yf": "GBPCHF=X",    "tv": "FX%3AGBPCHF"},
+    "GBP/JPY":  {"td": "GBP/JPY",     "tv": "FX%3AGBPJPY"},
+    "GBP/AUD":  {"td": "GBP/AUD",     "tv": "FX%3AGBPAUD"},
+    "GBP/CAD":  {"td": "GBP/CAD",     "tv": "FX%3AGBPCAD"},
+    "GBP/CHF":  {"td": "GBP/CHF",     "tv": "FX%3AGBPCHF"},
 
     # ── Croisées AUD ───────────────────────────────────────────────────────
-    "AUD/CAD":  {"yf": "AUDCAD=X",    "tv": "FX%3AAUDCAD"},
-    "AUD/JPY":  {"yf": "AUDJPY=X",    "tv": "FX%3AAUDJPY"},
-    "AUD/CHF":  {"yf": "AUDCHF=X",    "tv": "FX%3AAUDCHF"},
+    "AUD/CAD":  {"td": "AUD/CAD",     "tv": "FX%3AAUDCAD"},
+    "AUD/JPY":  {"td": "AUD/JPY",     "tv": "FX%3AAUDJPY"},
+    "AUD/CHF":  {"td": "AUD/CHF",     "tv": "FX%3AAUDCHF"},
 
     # ── Croisées NZD ───────────────────────────────────────────────────────
-    "NZD/USD":  {"yf": "NZDUSD=X",   "tv": "FX%3ANZDUSD"},
-    "EUR/NZD":  {"yf": "EURNZD=X",   "tv": "FX%3AEURNZD"},
-    "GBP/NZD":  {"yf": "GBPNZD=X",   "tv": "FX%3AGBPNZD"},
-    "AUD/NZD":  {"yf": "AUDNZD=X",   "tv": "FX%3AAUDNZD"},
-    "NZD/JPY":  {"yf": "NZDJPY=X",   "tv": "FX%3ANZDJPY"},
-    "NZD/CHF":  {"yf": "NZDCHF=X",   "tv": "FX%3ANZDCHF"},
-    "NZD/CAD":  {"yf": "NZDCAD=X",   "tv": "FX%3ANZDCAD"},
+    "NZD/USD":  {"td": "NZD/USD",     "tv": "FX%3ANZDUSD"},
+    "EUR/NZD":  {"td": "EUR/NZD",     "tv": "FX%3AEURNZD"},
+    "GBP/NZD":  {"td": "GBP/NZD",     "tv": "FX%3AGBPNZD"},
+    "AUD/NZD":  {"td": "AUD/NZD",     "tv": "FX%3AAUDNZD"},
+    "NZD/JPY":  {"td": "NZD/JPY",     "tv": "FX%3ANZDJPY"},
+    "NZD/CHF":  {"td": "NZD/CHF",     "tv": "FX%3ANZDCHF"},
+    "NZD/CAD":  {"td": "NZD/CAD",     "tv": "FX%3ANZDCAD"},
 
     # ── Autres croisées ────────────────────────────────────────────────────
-    "CAD/JPY":  {"yf": "CADJPY=X",    "tv": "FX%3ACADJPY"},
-    "CAD/CHF":  {"yf": "CADCHF=X",    "tv": "FX%3ACADCHF"},
-    "CHF/JPY":  {"yf": "CHFJPY=X",    "tv": "FX%3ACHFJPY"},
+    "CAD/JPY":  {"td": "CAD/JPY",     "tv": "FX%3ACADJPY"},
+    "CAD/CHF":  {"td": "CAD/CHF",     "tv": "FX%3ACADCHF"},
+    "CHF/JPY":  {"td": "CHF/JPY",     "tv": "FX%3ACHFJPY"},
 }
 
 # ─── Paramètres de détection ──────────────────────────────────────────────────
@@ -153,44 +153,46 @@ def compute_ema(series: pd.Series, period: int) -> pd.Series:
     return series.ewm(span=period, adjust=False).mean()
 
 
-# ─── Session HTTP avec headers navigateur (contourne l'anti-bot Yahoo) ────────
-_YF_SESSION = requests.Session()
-_YF_SESSION.headers.update({
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.5",
-})
+# ─── Client Twelve Data ───────────────────────────────────────────────────────
+# Tier gratuit : 8 crédits/min, 800 crédits/jour (1 crédit = 1 symbole)
+_TD_CLIENT: TDClient = None  # type: ignore
+
+def _get_td() -> TDClient:
+    global _TD_CLIENT
+    if _TD_CLIENT is None:
+        _TD_CLIENT = TDClient(apikey=TWELVE_DATA_API_KEY)
+    return _TD_CLIENT
+
 
 # ─── Récupération des données ─────────────────────────────────────────────────
 
-def fetch_h1_data(yf_ticker: str) -> pd.DataFrame | None:
-    """Télécharge 15 jours de données H1 via yfinance (source gratuite)."""
+def fetch_h1_data(td_symbol: str) -> pd.DataFrame | None:
+    """Télécharge 360 bougies H1 (~15 jours) via Twelve Data."""
     try:
-        df = yf.download(
-            yf_ticker,
-            period="15d",
+        df = _get_td().time_series(
+            symbol=td_symbol,
             interval="1h",
-            progress=False,
-            auto_adjust=True,
-            session=_YF_SESSION,
-        )
+            outputsize=360,
+            timezone="UTC",
+        ).as_pandas()
+
         if df.empty or len(df) < 60:
-            log.warning(f"Données insuffisantes pour {yf_ticker} ({len(df)} bougies)")
+            log.warning(f"Données insuffisantes pour {td_symbol} ({len(df)} bougies)")
             return None
 
-        # Aplatir le MultiIndex (yfinance ≥ 0.2.x retourne un MultiIndex)
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.droplevel(1)
-
-        df = df[["Open", "High", "Low", "Close", "Volume"]].dropna()
-        return df
+        df = df.rename(columns={"open": "Open", "high": "High", "low": "Low",
+                                 "close": "Close", "volume": "Volume"})
+        df = df.sort_index()
+        for col in ["Open", "High", "Low", "Close"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        if "Volume" not in df.columns:
+            df["Volume"] = 0.0
+        return df[["Open", "High", "Low", "Close", "Volume"]].dropna(
+            subset=["Open", "High", "Low", "Close"]
+        )
 
     except Exception as exc:
-        log.error(f"Erreur fetch {yf_ticker}: {exc}")
+        log.error(f"Erreur fetch {td_symbol}: {exc}")
         return None
 
 
@@ -556,8 +558,8 @@ async def scan_all(bot: Bot) -> None:
     for pair, info in FOREX_PAIRS.items():
         try:
             # ── Fetch H1 ──────────────────────────────────────────────────
-            await asyncio.sleep(1.0)  # évite le rate-limit Yahoo Finance
-            df = fetch_h1_data(info["yf"])
+            await asyncio.sleep(8.0)  # respect 8 crédits/min Twelve Data
+            df = fetch_h1_data(info["td"])
             if df is None:
                 log.info(f"  {pair:<12} | ⚠️  données indisponibles")
                 continue
