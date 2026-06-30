@@ -556,6 +556,7 @@ async def scan_all(bot: Bot) -> None:
     for pair, info in FOREX_PAIRS.items():
         try:
             # ── Fetch H1 ──────────────────────────────────────────────────
+            await asyncio.sleep(1.0)  # évite le rate-limit Yahoo Finance
             df = fetch_h1_data(info["yf"])
             if df is None:
                 log.info(f"  {pair:<12} | ⚠️  données indisponibles")
