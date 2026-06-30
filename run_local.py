@@ -7,11 +7,14 @@ Lance forex_bot.py toutes les 15 minutes dans une boucle infinie.
 import asyncio
 import logging
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from forex_bot import FOREX_PAIRS, TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID, scan_all
 
 from dotenv import load_dotenv
 from telegram import Bot
+
+TZ_PARIS = ZoneInfo("Europe/Paris")
 
 load_dotenv()
 
@@ -43,8 +46,8 @@ async def main() -> None:
 
     while True:
         await scan_all(bot)
-        next_scan = datetime.utcnow() + timedelta(minutes=SCAN_INTERVAL_MIN)
-        log.info(f"Prochain scan à {next_scan.strftime('%H:%M:%S')} UTC\n")
+        next_scan = datetime.now(TZ_PARIS) + timedelta(minutes=SCAN_INTERVAL_MIN)
+        log.info(f"Prochain scan à {next_scan.strftime('%H:%M:%S')} (Paris)\n")
         await asyncio.sleep(SCAN_INTERVAL_MIN * 60)
 
 
