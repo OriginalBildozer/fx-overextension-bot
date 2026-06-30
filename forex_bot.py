@@ -61,6 +61,10 @@ FOREX_PAIRS: dict[str, dict] = {
     "NAS100":   {"td": "NDX",         "tv": "OANDA%3ANAS100USD"},
     "SPX500":   {"td": "SPX",         "tv": "OANDA%3ASPX500USD"},
 
+    # ── Matières premières ─────────────────────────────────────────────────
+    "XAU/USD":  {"td": "XAU/USD",     "tv": "OANDA%3AXAUUSD"},
+    "WTI/USD":  {"td": "WTI/USD",     "tv": "NYMEX%3ACL1%21"},
+
     # ── Majeurs ────────────────────────────────────────────────────────────
     "EUR/USD":  {"td": "EUR/USD",     "tv": "FX%3AEURUSD"},
     "AUD/USD":  {"td": "AUD/USD",     "tv": "FX%3AAUDUSD"},
@@ -78,15 +82,27 @@ FOREX_PAIRS: dict[str, dict] = {
 
     # ── Croisées GBP ───────────────────────────────────────────────────────
     "GBP/JPY":  {"td": "GBP/JPY",     "tv": "FX%3AGBPJPY"},
+    "GBP/AUD":  {"td": "GBP/AUD",     "tv": "FX%3AGBPAUD"},
+    "GBP/CAD":  {"td": "GBP/CAD",     "tv": "FX%3AGBPCAD"},
+    "GBP/CHF":  {"td": "GBP/CHF",     "tv": "FX%3AGBPCHF"},
 
     # ── Croisées AUD ───────────────────────────────────────────────────────
     "AUD/CAD":  {"td": "AUD/CAD",     "tv": "FX%3AAUDCAD"},
+    "AUD/JPY":  {"td": "AUD/JPY",     "tv": "FX%3AAUDJPY"},
+    "AUD/CHF":  {"td": "AUD/CHF",     "tv": "FX%3AAUDCHF"},
 
     # ── Croisées NZD ───────────────────────────────────────────────────────
     "NZD/USD":  {"td": "NZD/USD",     "tv": "FX%3ANZDUSD"},
     "EUR/NZD":  {"td": "EUR/NZD",     "tv": "FX%3AEURNZD"},
+    "GBP/NZD":  {"td": "GBP/NZD",     "tv": "FX%3AGBPNZD"},
+    "AUD/NZD":  {"td": "AUD/NZD",     "tv": "FX%3AAUDNZD"},
+    "NZD/JPY":  {"td": "NZD/JPY",     "tv": "FX%3ANZDJPY"},
+    "NZD/CHF":  {"td": "NZD/CHF",     "tv": "FX%3ANZDCHF"},
+    "NZD/CAD":  {"td": "NZD/CAD",     "tv": "FX%3ANZDCAD"},
 
     # ── Autres croisées ────────────────────────────────────────────────────
+    "CAD/JPY":  {"td": "CAD/JPY",     "tv": "FX%3ACADJPY"},
+    "CAD/CHF":  {"td": "CAD/CHF",     "tv": "FX%3ACADCHF"},
     "CHF/JPY":  {"td": "CHF/JPY",     "tv": "FX%3ACHFJPY"},
 }
 
